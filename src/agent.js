@@ -61,6 +61,10 @@ export class ConversationAgent {
       config: this.config,
       workspace: this.paths.workspace,
       log: this.log,
+      // Inbound attachments live outside the workspace; expose them read-only
+      // so the agent can copy one into the vault (the media folder itself
+      // stays read-only inside the sandbox).
+      readRoots: [this.paths.media],
     });
     if (bashTool) customTools.push(bashTool);
     const sandboxedBash = Boolean(bashTool);

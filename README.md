@@ -377,7 +377,10 @@ inside its workspace:
    extension blocks `read`, `edit`, `write`, `grep`, `find`, `ls`, and the
    attachments of `wabox_send` when their path resolves outside the workspace —
    including through symlinks. Inbound attachments are the one exception: the
-   `read` family may also read the conversation's `media/` folder.
+   `read` family may also read the conversation's `media/` folder, and the
+   sandboxed shell sees that folder read-only, so the agent can copy an
+   attachment into the workspace (for example into the vault's attachments
+   folder) and then attach it with `wabox_send`.
 2. **`bash` runs under bubblewrap.** `sandboxBash: "auto"` (default) wraps every
    shell command with `bwrap` when it is installed: the host is read-only, only
    the workspace is writable, `$HOME`/XDG dirs are redirected into the

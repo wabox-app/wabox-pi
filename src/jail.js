@@ -224,8 +224,12 @@ export function createSandboxedBashTool({
 //   "auto"  - bubblewrap when available, otherwise warn and run unsandboxed
 //   "bwrap" - bubblewrap required; throw if it is missing
 //
+// `readRoots` are extra directories exposed read-only inside the sandbox (the
+// conversation's media folder, so the agent can read an inbound attachment and
+// copy it into the workspace).
+//
 // Returns a tool to add to `customTools`, or null to keep pi's built-in bash.
-export function resolveBashTool({ config, workspace, log }) {
+export function resolveBashTool({ config, workspace, log, readRoots = [] }) {
   const mode = config.sandboxBash ?? 'auto';
   if (mode === 'off') return null;
 
@@ -249,7 +253,7 @@ export function resolveBashTool({ config, workspace, log }) {
     bin,
     network: config.sandboxNetwork !== false,
     denyRead,
-    allowRead: config.sandboxAllowRead ?? [],
+    allowRead: [...(config.sandboxAllowRead ?? []), ...readRoots],
   });
 }
 

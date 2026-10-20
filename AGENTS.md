@@ -70,6 +70,10 @@ the pi SDK, `chokidar`, and `typebox`.
   that resolve outside the workspace (plus the conversation's `media/`) via a
   pi `tool_call` handler, and wraps `bash` in bubblewrap. `workspaceOverrides`
   redirects `cwd`; it must not defeat the jail's read roots.
+- **Inbound attachments are readable, not writable.** The conversation's
+  `media/` folder is a read root for the file tools and is ro-bound in the bash
+  sandbox, so the agent can read an attachment and copy it into the workspace.
+  It can never write back into `media/` (the copy direction is the only one).
 - **Instance config, per-slug overrides.** `conversationConfig(config, slug)`
   in `src/config.js` merges `config.json`'s `conversations.<slug>` over the
   instance config (workspace, tools, jail/sandbox, …). The daemon resolves it

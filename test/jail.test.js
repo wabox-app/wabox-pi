@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import {
   buildBwrapCommand,
+  resolveBashTool,
   resolveInside,
   shellQuote,
   toolPathArgs,
@@ -14,12 +15,14 @@ import {
 async function scratch() {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'wabox-jail-'));
   const workspace = path.join(root, 'workspace');
-  const media = path.join(root, 'media');
+  const state = path.join(root, 'state');
+  const media = path.join(state, 'conversations', 'slug', 'media');
   const outside = path.join(root, 'outside');
   await fs.mkdir(workspace, { recursive: true });
   await fs.mkdir(media, { recursive: true });
   await fs.mkdir(outside, { recursive: true });
-  return { root, workspace, media, outside };
+  await fs.writeFile(path.join(media, 'note.txt'), 'hello\n');
+  return { root, workspace, state, media, outside };
 }
 
 test('resolveInside allows paths under a root', async () => {
@@ -121,4 +124,41 @@ test('buildBwrapCommand re-exposes allowed paths read-only after a deny', () => 
 
 test('shellQuote survives embedded single quotes', () => {
   assert.equal(shellQuote(`it's fine`), `'it'\\''s fine'`);
+});
+
+test('resolveBashTool exposes read roots read-only inside the sandbox', async () => {
+  const { workspace, state, media } = await scratch();
+  const tool = resolveBashTool({
+    config: {
+      sandboxBash: 'bwrap',
+      sandboxNetwork: false,
+      sandboxDenyRead: [],
+      stateDir: state,
+    },
+    workspace,
+    readRoots: [media],
+    log: { info() {}, warn() {} },
+  });
+  assert.ok(tool, 'expected a sandboxed bash tool');
+
+  // The media folder is visible and readable, but not writable.
+  const res = await tool.execute(
+    'id',
+    { command: `cat "${media}/note.txt"; echo x > "${media}/new.txt" 2>&1 || echo MEDIA-READONLY` },
+    undefined,
+    () => {},
+  );
+  const output = res.content.map((c) => c.text).join('\n');
+  assert.match(output, /hello/);
+  assert.match(output, /MEDIA-READONLY/);
+});
+
+test('resolveBashTool returns null when the sandbox is off', async () => {
+  const { workspace } = await scratch();
+  const tool = resolveBashTool({
+    config: { sandboxBash: 'off' },
+    workspace,
+    log: { info() {}, warn() {} },
+  });
+  assert.equal(tool, null);
 });
