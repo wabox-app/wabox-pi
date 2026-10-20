@@ -136,14 +136,16 @@ export function existingPaths(values) {
 }
 
 // A bubblewrap invocation that runs `command` with the host read-only and only
-// `workspace` writable. `denyRead` entries are overlaid with an empty tmpfs
-// (and re-exposed only if the workspace lives under one of them).
+// `workspace` writable. `denyRead` entries are overlaid with an empty tmpfs;
+// `allowRead` re-exposes paths (read-only) inside a denied parent, and the
+// workspace bind comes last so it always wins.
 export function buildBwrapCommand({
   workspace,
   command,
   bin = 'bwrap',
   network = true,
   denyRead = [],
+  allowRead = [],
 }) {
   const args = [
     bin,
@@ -159,6 +161,7 @@ export function buildBwrapCommand({
     '/tmp',
   ];
   for (const dir of denyRead) args.push('--tmpfs', dir);
+  for (const dir of allowRead) args.push('--ro-bind', dir, dir);
   args.push(
     '--bind',
     workspace,
@@ -179,15 +182,30 @@ export function buildBwrapCommand({
 // A drop-in replacement for pi's built-in `bash` that runs every command under
 // bubblewrap. `ensureSession` passes it through `customTools`, which overrides
 // the built-in of the same name.
-export function createSandboxedBashTool({ workspace, bin = 'bwrap', network = true, denyRead = [] }) {
+export function createSandboxedBashTool({
+  workspace,
+  bin = 'bwrap',
+  network = true,
+  denyRead = [],
+  allowRead = [],
+}) {
   // Ordering in buildBwrapCommand() re-exposes the workspace after any hidden
   // ancestor, so the default workspace (which lives under stateDir) stays
-  // visible even though stateDir is hidden.
+  // visible even though stateDir is hidden. `allowRead` brings back toolchains
+  // under a denied `$HOME`.
   const hidden = existingPaths(denyRead);
+  const visible = existingPaths(allowRead);
 
   return createBashTool(workspace, {
     spawnHook: ({ command, cwd, env }) => ({
-      command: buildBwrapCommand({ workspace, command, bin, network, denyRead: hidden }),
+      command: buildBwrapCommand({
+        workspace,
+        command,
+        bin,
+        network,
+        denyRead: hidden,
+        allowRead: visible,
+      }),
       cwd,
       env: {
         ...env,
@@ -231,6 +249,7 @@ export function resolveBashTool({ config, workspace, log }) {
     bin,
     network: config.sandboxNetwork !== false,
     denyRead,
+    allowRead: config.sandboxAllowRead ?? [],
   });
 }
 

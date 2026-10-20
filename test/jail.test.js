@@ -106,6 +106,19 @@ test('buildBwrapCommand can isolate the network and hide directories', () => {
   assert.ok(command.includes("'--tmpfs' '/home/me/.ssh'"));
 });
 
+test('buildBwrapCommand re-exposes allowed paths read-only after a deny', () => {
+  const command = buildBwrapCommand({
+    workspace: '/ws',
+    command: 'node -v',
+    denyRead: ['/home/me'],
+    allowRead: ['/home/me/.local/share/mise'],
+  });
+  const hide = command.indexOf("'--tmpfs' '/home/me'");
+  const show = command.indexOf("'--ro-bind' '/home/me/.local/share/mise' '/home/me/.local/share/mise'");
+  const bind = command.indexOf("'--bind' '/ws' '/ws'");
+  assert.ok(hide !== -1 && show > hide && bind > show);
+});
+
 test('shellQuote survives embedded single quotes', () => {
   assert.equal(shellQuote(`it's fine`), `'it'\\''s fine'`);
 });

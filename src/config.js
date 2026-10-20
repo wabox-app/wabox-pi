@@ -55,6 +55,7 @@ const CONVERSATION_KEYS = [
   'sandboxBash',
   'sandboxNetwork',
   'sandboxDenyRead',
+  'sandboxAllowRead',
   'sandboxBashBin',
   'tools',
   'excludeTools',
@@ -78,6 +79,9 @@ function normalizeConversation(override, base) {
   if (override.sandboxBashBin !== undefined) out.sandboxBashBin = String(override.sandboxBashBin);
   if (override.sandboxDenyRead !== undefined) {
     out.sandboxDenyRead = list(override.sandboxDenyRead, DEFAULT_SANDBOX_DENY_READ);
+  }
+  if (override.sandboxAllowRead !== undefined) {
+    out.sandboxAllowRead = list(override.sandboxAllowRead, []);
   }
   if (override.tools !== undefined) out.tools = list(override.tools, DEFAULT_TOOLS);
   if (override.excludeTools !== undefined) out.excludeTools = list(override.excludeTools, []);
@@ -175,6 +179,9 @@ export function loadConfig({ cwd = process.cwd() } = {}) {
       env('WABOX_PI_SANDBOX_DENY_READ') ?? file?.sandboxDenyRead,
       DEFAULT_SANDBOX_DENY_READ,
     ),
+    // Read-only paths re-exposed inside a denied parent (useful when
+    // `sandboxDenyRead` hides `~` but a toolchain under it must still run).
+    sandboxAllowRead: list(env('WABOX_PI_SANDBOX_ALLOW_READ') ?? file?.sandboxAllowRead, []),
 
     // Per-conversation overrides (workspace, tools, jail/sandbox, …). Relative
     // paths resolve against the config file; see `conversationConfig`.

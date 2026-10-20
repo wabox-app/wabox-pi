@@ -77,6 +77,7 @@ lives at `${XDG_CONFIG_HOME:-~/.config}/wabox-pi/config.json`:
   "sandboxBash": "auto",
   "sandboxNetwork": true,
   "sandboxDenyRead": ["~/.ssh", "~/.aws", "~/.gnupg", "~/.pi"],
+  "sandboxAllowRead": [],
   "workspaceOverrides": {
     "277880256909343-2a21b939c8": "/home/rod/Valter"
   },
@@ -106,6 +107,7 @@ lives at `${XDG_CONFIG_HOME:-~/.config}/wabox-pi/config.json`:
 | `sandboxBash` | `WABOX_PI_SANDBOX_BASH` | `auto` | `off`, `auto` (bubblewrap if present, else warn), `bwrap` (required) |
 | `sandboxNetwork` | `WABOX_PI_SANDBOX_NET` | `true` | keep network access inside the bash sandbox |
 | `sandboxDenyRead` | `WABOX_PI_SANDBOX_DENY_READ` | sensible secrets list | dirs hidden from sandboxed bash |
+| `sandboxAllowRead` | `WABOX_PI_SANDBOX_ALLOW_READ` | `[]` | read-only paths re-exposed inside a denied parent |
 | `sandboxBashBin` | `WABOX_PI_SANDBOX_BASH_BIN` | `bwrap` | bubblewrap binary |
 | `conversations` | — | `{}` | per-slug overrides (see below) |
 | `workspaceOverrides` | — | `{}` | older shortcut for `conversations.<slug>.workspace` |
@@ -139,8 +141,8 @@ a single chat, keyed by the conversation slug (the folder name under
 ```
 
 Overridable keys: `workspace`, `jail`, `sandboxBash`, `sandboxNetwork`,
-`sandboxDenyRead`, `sandboxBashBin`, `tools`, `excludeTools`, `autoReply`,
-`errorReply`, `ackReact`, `batchWindowMs`, `workspaceTemplate`. Values replace
+`sandboxDenyRead`, `sandboxAllowRead`, `sandboxBashBin`, `tools`, `excludeTools`,
+`autoReply`, `errorReply`, `ackReact`, `batchWindowMs`, `workspaceTemplate`. Values replace
 the instance value (lists are not merged); relative paths resolve against the
 config file. A per-slug value wins over the environment variable for that
 conversation. `groupPerParticipant` is instance-wide because it changes the slug
