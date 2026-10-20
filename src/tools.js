@@ -53,9 +53,12 @@ export function createSendTool({ config, turn, log }) {
         throw new Error('nothing to send: provide text, files, or react');
       }
 
+      // A scheduled/proactive turn has no inbound message, so it never quotes
+      // and can only react if the model names an explicit message id.
+      const proactive = turn.proactive === true;
       const job = { to: envelope.from };
 
-      if (params.quote !== false) {
+      if (!proactive && params.quote !== false) {
         job.replyTo = {
           id: envelope.id,
           ...(envelope.participant ? { participant: envelope.participant } : {}),
@@ -63,9 +66,11 @@ export function createSendTool({ config, turn, log }) {
       }
 
       if (params.react) {
+        const messageId = params.react.messageId || (proactive ? '' : envelope.id);
+        if (!messageId) throw new Error('nothing to react to in a scheduled task');
         job.react = {
           emoji: params.react.emoji ?? '',
-          messageId: params.react.messageId || envelope.id,
+          messageId,
           ...(envelope.participant ? { participant: envelope.participant } : {}),
         };
       }

@@ -1,12 +1,13 @@
 // Chat commands handled by the harness itself. Anything else that starts with
 // "/" is passed to pi, so pi slash commands and skills keep working.
 
-export const LOCAL_COMMANDS = new Set(['help', 'ping', 'status', 'new', 'reset', 'clear']);
+export const LOCAL_COMMANDS = new Set(['help', 'ping', 'status', 'tasks', 'new', 'reset', 'clear']);
 
 export const HELP = [
   '*wabox-pi*',
   '/help — this message',
   '/status — session and workspace info',
+  '/tasks — list scheduled tasks and their next run',
   '/new — start a fresh conversation session',
   '/ping — check that the harness is alive',
 ].join('\n');

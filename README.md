@@ -73,6 +73,7 @@ lives at `${XDG_CONFIG_HOME:-~/.config}/wabox-pi/config.json`:
   "tools": ["read", "bash", "edit", "write", "grep", "find", "ls"],
   "excludeTools": [],
   "logLevel": "info",
+  "timezone": "America/Sao_Paulo",
   "jail": true,
   "sandboxBash": "auto",
   "sandboxNetwork": true,
@@ -87,7 +88,15 @@ lives at `${XDG_CONFIG_HOME:-~/.config}/wabox-pi/config.json`:
       "tools": ["read", "edit", "write"],
       "sandboxBash": "bwrap"
     }
-  }
+  },
+  "tasks": [
+    {
+      "name": "morning-brief",
+      "slug": "277880256909343-2a21b939c8",
+      "cron": "0 8 * * 1-5",
+      "prompt": "Summarise today's notes and calendar, then send it here."
+    }
+  ]
 }
 ```
 
@@ -111,6 +120,9 @@ lives at `${XDG_CONFIG_HOME:-~/.config}/wabox-pi/config.json`:
 | `sandboxBashBin` | `WABOX_PI_SANDBOX_BASH_BIN` | `bwrap` | bubblewrap binary |
 | `conversations` | — | `{}` | per-slug overrides (see below) |
 | `workspaceOverrides` | — | `{}` | older shortcut for `conversations.<slug>.workspace` |
+| `tasks` | — | `[]` | scheduled tasks (see below) |
+| `timezone` | `WABOX_PI_TIMEZONE` | system | default IANA time zone for `tasks` cron |
+| `schedulerTickMs` | `WABOX_PI_SCHEDULER_TICK_MS` | `20000` | how often the scheduler checks for due tasks |
 | `logLevel` | `WABOX_PI_LOG_LEVEL` | `info` | `debug`, `info`, `warn`, `error` |
 
 #### Per-conversation overrides
@@ -155,6 +167,59 @@ only the harness working directory (`cwd`) is redirected.
 Without `inboxDir`/`outboxDir`, `wabox-pi` asks `wabox status` (and
 `wabox status --json` on newer cores) before falling back to XDG defaults.
 
+### Scheduled tasks
+
+`tasks` runs an agent turn on a cron schedule, with no incoming message, so the
+agent can send a proactive WhatsApp message (or do work and report back):
+
+```json
+{
+  "timezone": "America/Sao_Paulo",
+  "tasks": [
+    {
+      "name": "morning-brief",
+      "slug": "277880256909343-2a21b939c8",
+      "cron": "0 8 * * 1-5",
+      "prompt": "Summarise today's notes and calendar, then send it here.",
+      "enabled": true
+    },
+    {
+      "name": "weekly-review",
+      "to": "5511999998888@s.whatsapp.net",
+      "cron": "0 18 * * 5",
+      "timezone": "America/Sao_Paulo",
+      "prompt": "Ask how the week went and offer to file the notes."
+    }
+  ]
+}
+```
+
+| Field | Meaning |
+| --- | --- |
+| `name` | unique label (also the key in `scheduler.json`) |
+| `slug` or `to` | target conversation; `slug` uses the JID remembered from the last inbound message, `to` is an explicit JID |
+| `participant` | group participant, when `to` names a group |
+| `cron` | 5-field cron (`minute hour day-of-month month day-of-week`) or `@daily`/`@hourly`/`@weekly`/`@monthly`/`@yearly` |
+| `timezone` | IANA zone for this task; falls back to the global `timezone`, then the system zone |
+| `prompt` | instructions for the turn |
+| `enabled` | default `true` |
+
+The task turn is serialized with that chat's other turns and the agent replies
+through the normal `wabox_send` tool (no quoting, since there is no message to
+quote). If it produces only text, `autoReply` sends it. The harness remembers
+the JID the first time it sees a chat (`conversations/<slug>/identity.json`), so
+`slug` targets keep working across restarts. `identity.json` is written from the
+inbound envelope only; nothing is invented.
+
+Behavior notes:
+
+- The scheduler ticks every `schedulerTickMs` and fires each task **at most
+  once per minute**; the last fire is persisted in `scheduler.json` so a restart
+  inside the same minute does not double-send.
+- A task missed while the daemon was down is **not** replayed.
+- Invalid tasks (bad cron, unknown timezone, missing target) are reported at
+  startup and by `/tasks`; they never crash the daemon.
+
 ### Chat commands
 
 Send these as normal WhatsApp messages:
@@ -163,6 +228,7 @@ Send these as normal WhatsApp messages:
 | --- | --- |
 | `/help` | command list |
 | `/status` | session id, model, workspace, turn count |
+| `/tasks` | scheduled tasks, next run, and which target each uses |
 | `/new` (or `/reset`, `/clear`) | drop the session history for this chat |
 | `/ping` | liveness check |
 
@@ -209,7 +275,9 @@ the agent names; the file jail keeps those inside the workspace.
     sessions/      pi session JSONL files
     media/         inbound attachments moved out of wabox's inbox
     processed/     claimed inbox envelopes (audit trail)
+    identity.json  JID last seen, used to target scheduled messages
   failed/          invalid envelopes
+  scheduler.json   last fire per scheduled task
   wabox-pi.log
 ```
 
@@ -224,6 +292,9 @@ the agent names; the file jail keeps those inside the workspace.
 4. **Reply.** The agent calls `wabox_send` (text / files / reaction), which writes
    an atomic outbox job. If it only produced text, that text is sent as the
    reply. Every reply quotes the incoming message by default.
+5. **Schedule.** Independently of the inbox, the scheduler fires due `tasks`
+   onto the same per-chat queue, so a proactive message is serialized with the
+   chat's replies; it is marked proactive and never quotes.
 
 ### Invariants
 
@@ -237,7 +308,10 @@ the agent names; the file jail keeps those inside the workspace.
 - **Serialized turns per chat.** pi sessions are not safe for concurrent turns,
   and a late reply would land after a newer question.
 - **One daemon.** A PID lock in the state dir prevents two harnesses racing over
-  the same inbox/sessions.
+  the same inbox/sessions, and therefore the same scheduled tasks.
+- **Verbatim JID for proactive sends.** A task sends to the JID recorded from
+  the chat's last inbound message (or an explicit `to`), never a normalized or
+  guessed identity.
 
 ## Development
 
@@ -266,7 +340,7 @@ printf '%s' '{"id":"X1","from":"5511999998888@s.whatsapp.net","number":"55119999
 - Per-conversation model/thinking overrides (`/model`).
 - Approval over WhatsApp for sensitive tool calls (currently tools run
   unattended; restrict `tools` for untrusted chats).
-- Scheduled jobs and proactive messages.
+- Catch-up for scheduled tasks that were due while the daemon was down.
 - Idle-session eviction for installations with many conversations.
 - Audio transcription hook (inbound voice notes).
 - Optional service unit / installer.

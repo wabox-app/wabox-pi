@@ -49,6 +49,14 @@ export function reactionJob(envelope, emoji) {
   };
 }
 
+// A proactive message: no inbound message to quote, so no `replyTo`.
+export function proactiveJob(envelope, { text, files } = {}) {
+  const job = { to: envelope.from };
+  if (text) job.text = text;
+  if (files?.length) job.files = files;
+  return job;
+}
+
 export function replyJob(envelope, { text, files } = {}) {
   const job = {
     to: envelope.from,

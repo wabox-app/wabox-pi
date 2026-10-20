@@ -48,6 +48,18 @@ function one(envelope, index) {
   return lines.join('\n');
 }
 
+export function buildTaskPrompt(task) {
+  return [
+    'This is a scheduled task, not a reply to an incoming message.',
+    '',
+    `Task: ${task.name}`,
+    String(task.prompt || '').trim(),
+    '',
+    'Do the work now. Deliver anything you want the user to see with the',
+    'wabox_send tool; there is no incoming message to quote or react to.',
+  ].join('\n');
+}
+
 export function buildTurnPrompt(envelopes) {
   const body = envelopes.map(one).join('\n\n');
   return [

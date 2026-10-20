@@ -21,15 +21,17 @@ the pi SDK, `chokidar`, and `typebox`.
 | `src/cli.js` | `run` / `status` / `version` / `help`. |
 | `src/config.js` | env > `config.json` > defaults; per-slug overrides; state paths. |
 | `src/wabox-paths.js` | Asks `wabox status` for the inbox/outbox (fallback: XDG). |
-| `src/daemon.js` | Inbox watcher, envelope claiming, per-chat queue runners. |
+| `src/daemon.js` | Inbox watcher, envelope claiming, per-chat queue runners, task firing. |
 | `src/agent.js` | One `ConversationAgent` per chat: session lifecycle, turns. |
-| `src/commands.js` | Local `/help`, `/status`, `/new`, `/ping` dispatch. |
+| `src/commands.js` | Local `/help`, `/status`, `/tasks`, `/new`, `/ping` dispatch. |
 | `src/tools.js` | The `wabox_send` tool (text/files/reaction → outbox job). |
 | `src/outbox.js` | Atomic job writer + reply/reaction job builders. |
 | `src/prompt.js` | Inbox envelope → per-turn prompt (pure). |
 | `src/instructions.js` | WhatsApp-etiquette section appended to pi's system prompt. |
 | `src/workspace.js` | Per-conversation dirs; seeds `AGENTS.md` once. |
 | `src/jail.js` | Path-jail file tools; bubblewrap-sandbox `bash`. |
+| `src/cron.js` | Time-zone-aware 5-field cron parsing + next-run search (pure). |
+| `src/schedule.js` | Scheduled-task normalization, due check, last-run persistence. |
 | `src/routing.js` | Conversation key + filesystem-safe slug. |
 | `src/envelope.js` | Envelope parsing/validation and reply targeting. |
 | `src/fsutil.js` | Cross-filesystem move (inbox and state may be different mounts). |
@@ -65,6 +67,12 @@ the pi SDK, `chokidar`, and `typebox`.
   in `src/config.js` merges `config.json`'s `conversations.<slug>` over the
   instance config (workspace, tools, jail/sandbox, …). The daemon resolves it
   once per claim and hands the merged config to paths and the agent.
+- **Scheduled turns go through the chat's queue.** `Scheduler` only decides
+  *when*; `onFire` resolves the target and calls `runner.enqueueTask()`, so a
+  proactive turn is serialized with that chat's replies and can use
+  `wabox_send`. Tasks are marked `turn.proactive` so nothing quotes or reacts to
+  a synthetic message id. `lastRun` is persisted in `scheduler.json`; missed
+  runs are not replayed.
 
 ## Gotchas
 

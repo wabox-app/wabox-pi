@@ -13,11 +13,12 @@ import {
   getAgentDir,
   SessionManager,
 } from '@earendil-works/pi-coding-agent';
-import { buildTurnPrompt } from './prompt.js';
+import { buildTaskPrompt, buildTurnPrompt } from './prompt.js';
 import { systemPromptAppend } from './instructions.js';
 import { createSendTool } from './tools.js';
-import { replyJob, writeJob } from './outbox.js';
+import { proactiveJob, replyJob, writeJob } from './outbox.js';
 import { HELP, parseLocalCommand } from './commands.js';
+import { nextCronDate } from './cron.js';
 import { resolveBashTool, workspaceJailExtension } from './jail.js';
 
 export class ConversationAgent {
@@ -36,6 +37,7 @@ export class ConversationAgent {
       sentContent: false,
       sentAny: false,
       sent: [],
+      proactive: false,
     };
   }
 
@@ -139,6 +141,7 @@ export class ConversationAgent {
     this.turn.sentContent = false;
     this.turn.sentAny = false;
     this.turn.sent = [];
+    this.turn.proactive = false;
 
     try {
       let expandPromptTemplates = false;
@@ -177,20 +180,64 @@ export class ConversationAgent {
     }
   }
 
-  async reportError(envelope, err) {
+  async reportError(envelope, err, { proactive = false } = {}) {
     if (!this.config.errorReply) return;
     // Keep details out of the chat: error text can contain local paths or
     // provider internals. The operator has the log.
     this.log.error(`[${this.slug}] turn error detail: ${String(err?.message || err)}`);
+    const text = proactive
+      ? '⚠️ A scheduled task failed. The operator can check the wabox-pi log.'
+      : '⚠️ I could not process that message. The operator can check the wabox-pi log.';
     try {
       await writeJob(
         this.config.outboxDir,
-        replyJob(envelope, {
-          text: '⚠️ I could not process that message. The operator can check the wabox-pi log.',
-        }),
+        proactive ? proactiveJob(envelope, { text }) : replyJob(envelope, { text }),
       );
     } catch (writeErr) {
       this.log.error(`[${this.slug}] could not send error reply: ${writeErr.message}`);
+    }
+  }
+
+  // A scheduled task: run one turn against a synthetic target so tools can
+  // reach the chat, but mark it proactive so nothing quotes a nonexistent
+  // message. Turns stay serialized by the runner.
+  async runTask(task, identity) {
+    this.lastUsed = Date.now();
+    this.turns += 1;
+
+    this.turn.envelope = {
+      id: null,
+      from: identity.from,
+      participant: identity.participant ?? null,
+      pushName: identity.pushName ?? null,
+      number: identity.number ?? null,
+    };
+    this.turn.workspace = this.paths.workspace;
+    this.turn.sentContent = false;
+    this.turn.sentAny = false;
+    this.turn.sent = [];
+    this.turn.proactive = true;
+
+    const started = Date.now();
+    try {
+      const session = await this.ensureSession();
+      await session.prompt(buildTaskPrompt(task));
+      const text = session.getLastAssistantText()?.trim() || '';
+      if (!this.turn.sentContent && this.config.autoReply && text) {
+        await writeJob(this.config.outboxDir, proactiveJob(this.turn.envelope, { text }));
+      }
+      this.log.info(
+        `[${this.slug}] task "${task.name}" done in ${Date.now() - started}ms ` +
+          `(${this.turn.sent.length} outbox job(s)${this.turn.sentContent ? '' : ', auto-reply'})`,
+      );
+    } catch (err) {
+      this.log.error(`[${this.slug}] task "${task.name}" failed: ${err?.message || err}`);
+      this.disposeSession();
+      await this.reportError(this.turn.envelope, err, { proactive: true });
+      throw err;
+    } finally {
+      this.turn.envelope = null;
+      this.turn.proactive = false;
     }
   }
 
@@ -205,6 +252,9 @@ export class ConversationAgent {
         break;
       case 'status':
         reply = await this.statusText();
+        break;
+      case 'tasks':
+        reply = this.tasksText();
         break;
       case 'new':
       case 'reset':
@@ -232,6 +282,29 @@ export class ConversationAgent {
       lines.push('session: not started');
     }
     if (this.modelFallbackMessage) lines.push(`note: ${this.modelFallbackMessage}`);
+    return lines.join('\n');
+  }
+
+  tasksText() {
+    const tasks = this.config.tasks ?? [];
+    if (!tasks.length) return 'No scheduled tasks configured.';
+    const now = new Date();
+    const lines = ['*Scheduled tasks*'];
+    for (const task of tasks) {
+      const target = task.slug || task.to || '?';
+      const here = task.slug === this.slug ? ' (this chat)' : '';
+      if (task.error) {
+        lines.push(`• ${task.name} [${target}] — invalid: ${task.error}`);
+        continue;
+      }
+      const next = task.enabled ? nextCronDate(task.parsed, now, task.timezone) : null;
+      lines.push(
+        `• ${task.name}${here} — ${task.enabled ? 'on' : 'off'}, ${task.cron}` +
+          `${task.timezone ? ` ${task.timezone}` : ''}` +
+          `${next ? `, next ${next.toISOString()}` : ''}` +
+          ` — ${target}`,
+      );
+    }
     return lines.join('\n');
   }
 

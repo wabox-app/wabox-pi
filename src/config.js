@@ -9,6 +9,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { resolveFrom, xdg } from './paths.js';
 import { resolveWaboxPaths } from './wabox-paths.js';
+import { normalizeTasks } from './schedule.js';
 
 const SRC_DIR = path.dirname(fileURLToPath(import.meta.url));
 const DEFAULT_WORKSPACE_TEMPLATE = path.resolve(SRC_DIR, '../templates/workspace-AGENTS.md');
@@ -206,12 +207,22 @@ export function loadConfig({ cwd = process.cwd() } = {}) {
       : DEFAULT_WORKSPACE_TEMPLATE,
 
     logLevel: env('WABOX_PI_LOG_LEVEL') || env('LOG_LEVEL') || file?.logLevel || 'info',
+
+    // Scheduled tasks and the default time zone their cron is evaluated in.
+    timezone: env('WABOX_PI_TIMEZONE') || file?.timezone || null,
+    tasks: [],
+    schedulerTickMs: int(env('WABOX_PI_SCHEDULER_TICK_MS') ?? file?.schedulerTickMs, 20_000, {
+      min: 1_000,
+    }),
   };
+
+  config.tasks = normalizeTasks(file?.tasks, { timezone: config.timezone });
 
   config.logFile = path.join(stateDir, 'wabox-pi.log');
   config.lockFile = path.join(stateDir, 'wabox-pi.lock');
   config.failedDir = path.join(stateDir, 'failed');
   config.conversationsDir = path.join(stateDir, 'conversations');
+  config.schedulerFile = path.join(stateDir, 'scheduler.json');
 
   return config;
 }

@@ -11,7 +11,8 @@ import chokidar from 'chokidar';
 import { readEnvelope } from './envelope.js';
 import { conversationKey, slugFor } from './routing.js';
 import { conversationConfig } from './config.js';
-import { ensureConversation, seedWorkspace } from './workspace.js';
+import { ensureConversation, readIdentity, rememberIdentity, seedWorkspace } from './workspace.js';
+import { Scheduler } from './schedule.js';
 import { writeJob, reactionJob } from './outbox.js';
 import { moveFile } from './fsutil.js';
 import { ConversationAgent } from './agent.js';
@@ -32,7 +33,13 @@ class ConversationRunner {
 
   enqueue(envelope) {
     if (this.stopped) return;
-    this.queue.push(envelope);
+    this.queue.push({ kind: 'message', envelope });
+    this.schedule();
+  }
+
+  enqueueTask({ task, identity }) {
+    if (this.stopped) return;
+    this.queue.push({ kind: 'task', task, identity });
     this.schedule();
   }
 
@@ -50,9 +57,23 @@ class ConversationRunner {
     this.busy = true;
     try {
       while (!this.stopped && this.queue.length) {
-        // A batch is whatever accumulated during the debounce window. Messages
-        // that arrive mid-turn are handled as the next batch.
-        const batch = this.queue.splice(0);
+        // A scheduled task is always its own turn.
+        if (this.queue[0].kind === 'task') {
+          const { task, identity } = this.queue.shift();
+          try {
+            await this.agent.runTask(task, identity);
+          } catch {
+            // runTask already logged it.
+          }
+          continue;
+        }
+
+        // A batch is whatever messages accumulated during the debounce window.
+        // Messages that arrive mid-turn are handled as the next batch.
+        const batch = [];
+        while (this.queue.length && this.queue[0].kind === 'message') {
+          batch.push(this.queue.shift().envelope);
+        }
         try {
           await this.agent.handleBatch(batch);
         } catch {
@@ -142,6 +163,7 @@ async function claimEnvelope(file, config, log) {
     }
   }
 
+  await rememberIdentity(paths, envelope);
   await seedWorkspace(convConfig, paths, log);
   return { envelope, slug, paths, config: convConfig };
 }
@@ -165,6 +187,38 @@ export async function startDaemon(config, log) {
     }
     return runner;
   };
+
+  // Reach a conversation without an inbound message: resolve its identity
+  // (the JID we last replied on) and enqueue a proactive turn on its runner.
+  const fireTask = async (task) => {
+    let slug = task.slug;
+    let identity = null;
+    if (task.to) {
+      identity = { from: task.to, participant: task.participant ?? null };
+      slug = slugFor(
+        conversationKey(identity, { groupPerParticipant: config.groupPerParticipant }),
+      );
+    }
+
+    const convConfig = conversationConfig(config, slug);
+    const paths = await ensureConversation(convConfig, slug);
+    if (!identity) identity = await readIdentity(paths);
+    if (!identity?.from) {
+      log.warn(`[schedule] "${task.name}": no identity recorded for ${slug} yet; skipping`);
+      return;
+    }
+
+    runnerFor(slug, paths, convConfig).enqueueTask({ task, identity });
+  };
+
+  const scheduler = new Scheduler({
+    tasks: config.tasks,
+    log,
+    stateFile: config.schedulerFile,
+    tickMs: config.schedulerTickMs,
+    onFire: fireTask,
+  });
+  await scheduler.start();
 
   let stopping = false;
 
@@ -226,6 +280,7 @@ export async function startDaemon(config, log) {
     if (stopping) return;
     stopping = true;
     log.info(`received ${signal}, shutting down`);
+    scheduler.stop();
     await watcher.close().catch(() => {});
 
     // Let claims that already started finish (so no envelope is half-moved),
@@ -248,5 +303,5 @@ export async function startDaemon(config, log) {
   process.on('SIGINT', () => void shutdown('SIGINT'));
   process.on('SIGTERM', () => void shutdown('SIGTERM'));
 
-  return { watcher, runners, shutdown, done };
+  return { watcher, runners, scheduler, shutdown, done };
 }

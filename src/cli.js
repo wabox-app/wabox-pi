@@ -4,6 +4,7 @@ import { loadConfig } from './config.js';
 import { createLogger } from './logger.js';
 import { acquireLock } from './lock.js';
 import { startDaemon } from './daemon.js';
+import { nextCronDate } from './cron.js';
 import { APP, VERSION } from './version.js';
 
 function usage() {
@@ -30,6 +31,8 @@ Environment:
   WABOX_PI_ERROR_REPLY             0 to stay silent when a turn fails
   WABOX_PI_GROUP_PER_PARTICIPANT   1 to give each group sender their own session
   WABOX_PI_TOOLS                   comma-separated pi tool allowlist
+  WABOX_PI_TIMEZONE                default IANA zone for scheduled tasks
+  WABOX_PI_SANDBOX_BASH            off | auto | bwrap (required)
 `);
 }
 
@@ -75,6 +78,18 @@ async function status(asJson) {
       config: config.configFile,
     },
     conversations: [],
+    tasks: config.tasks.map((task) => ({
+      name: task.name,
+      enabled: task.enabled,
+      cron: task.cron,
+      timezone: task.timezone,
+      target: task.slug || task.to || null,
+      error: task.error || null,
+      next:
+        task.parsed && task.enabled
+          ? nextCronDate(task.parsed, new Date(), task.timezone)?.toISOString() ?? null
+          : null,
+    })),
     settings: {
       batchWindowMs: config.batchWindowMs,
       ackReact: config.ackReact,
@@ -119,6 +134,19 @@ async function status(asJson) {
     );
   }
   console.log('');
+  if (data.tasks.length) {
+    console.log('Scheduled tasks:');
+    for (const task of data.tasks) {
+      const flags = [
+        task.enabled ? 'on' : 'off',
+        `${task.cron}${task.timezone ? ` ${task.timezone}` : ''}`,
+        task.error ? `ERROR: ${task.error}` : `next ${task.next ?? 'never'}`,
+        task.target ?? '',
+      ];
+      console.log(`  ${task.name.padEnd(20)} ${flags.join('  ')}`);
+    }
+    console.log('');
+  }
   console.log('Settings:');
   console.log(`  autoReply           : ${config.autoReply}`);
   console.log(`  batchWindowMs       : ${config.batchWindowMs}`);

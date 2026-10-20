@@ -26,7 +26,35 @@ export function conversationPaths(config, slug) {
     sessions: path.join(root, 'sessions'),
     media: path.join(root, 'media'),
     processed: path.join(root, 'processed'),
+    identity: path.join(root, 'identity.json'),
   };
+}
+
+// Remember how to reach this conversation for proactive/scheduled messages.
+// The JID is stored verbatim: replying on a different identity desyncs Signal.
+export async function rememberIdentity(paths, envelope) {
+  const identity = {
+    from: envelope.from,
+    participant: envelope.participant ?? null,
+    pushName: envelope.pushName ?? null,
+    number: envelope.number ?? null,
+    updatedAt: new Date().toISOString(),
+  };
+  try {
+    await fs.writeFile(paths.identity, `${JSON.stringify(identity, null, 2)}\n`, { mode: 0o600 });
+  } catch {
+    // A missing identity only disables scheduled sends for this chat.
+  }
+  return identity;
+}
+
+export async function readIdentity(paths) {
+  try {
+    const identity = JSON.parse(await fs.readFile(paths.identity, 'utf8'));
+    return identity && typeof identity.from === 'string' ? identity : null;
+  } catch {
+    return null;
+  }
 }
 
 export async function ensureConversation(config, slug) {
