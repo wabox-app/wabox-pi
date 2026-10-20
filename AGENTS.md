@@ -1,0 +1,96 @@
+# AGENTS.md
+
+Guidance for AI coding agents working in this repo. Humans: see
+[README.md](README.md).
+
+## What this is
+
+`wabox-pi` is a consumer of [wabox-core](../wabox-core): it watches the core's
+`inbox/`, runs a pi coding-agent session per WhatsApp conversation, and writes
+replies to `outbox/`. It is a sibling of `wabox-bot` (bash, subprocess backends)
+and is intentionally **not** a replacement for `wabox run`.
+
+ESM JavaScript, Node >= 22.19, no build step. Runtime deps are deliberately few:
+the pi SDK, `chokidar`, and `typebox`.
+
+## Module map
+
+| Path | Responsibility |
+| --- | --- |
+| `bin/wabox-pi.js` | Entrypoint; delegates to `src/cli.js`. |
+| `src/cli.js` | `run` / `status` / `version` / `help`. |
+| `src/config.js` | env > `config.json` > defaults; resolves state paths. |
+| `src/wabox-paths.js` | Asks `wabox status` for the inbox/outbox (fallback: XDG). |
+| `src/daemon.js` | Inbox watcher, envelope claiming, per-chat queue runners. |
+| `src/agent.js` | One `ConversationAgent` per chat: session lifecycle, turns. |
+| `src/commands.js` | Local `/help`, `/status`, `/new`, `/ping` dispatch. |
+| `src/tools.js` | The `wabox_send` tool (text/files/reaction → outbox job). |
+| `src/outbox.js` | Atomic job writer + reply/reaction job builders. |
+| `src/prompt.js` | Inbox envelope → per-turn prompt (pure). |
+| `src/instructions.js` | WhatsApp-etiquette section appended to pi's system prompt. |
+| `src/workspace.js` | Per-conversation dirs; seeds `AGENTS.md` once. |
+| `src/routing.js` | Conversation key + filesystem-safe slug. |
+| `src/envelope.js` | Envelope parsing/validation and reply targeting. |
+| `src/fsutil.js` | Cross-filesystem move (inbox and state may be different mounts). |
+| `src/lock.js` | Single-instance PID lock. |
+| `src/logger.js` | stderr + state-dir log, no dependencies. |
+| `templates/workspace-AGENTS.md` | Seeded into each new conversation workspace. |
+
+## Invariants
+
+- **Claim = rename out of `inbox/`.** That unlink is wabox-core's read-receipt
+  signal. Read the JSON into memory first, rename immediately, then do slow work.
+- **Reply to `from` verbatim.** DMs can arrive as `@lid` or `@s.whatsapp.net`;
+  switching identities desyncs the recipient's Signal session. Never "normalize"
+  the JID in the harness.
+- **Outbox writes are atomic.** Temp name without `.json`, then rename. wabox
+  sends any `*.json` at depth 0 immediately.
+- **Turns are serialized per conversation.** pi sessions cannot run two turns at
+  once, and out-of-order replies are confusing. Different conversations run
+  concurrently.
+- **Tools are the protocol.** `wabox_send` writes jobs during the turn. If the
+  agent sends text/files through it, the final assistant text is *not* sent
+  again. If it sends nothing, `autoReply` sends the final text (a safety net).
+- **Only `wabox-pi` deletes inbox files.** Media is moved into the conversation's
+  `media/` folder so the agent has a stable path and the audit trail survives.
+- **State is per conversation.** Sessions, workspace, media, and processed
+  envelopes live under `conversations/<slug>/`; `/new` only clears that chat's
+  session files.
+
+## Gotchas
+
+- `SessionManager.continueRecent(cwd, sessionDir)` creates a new session when
+  none exists. `/new` deletes only `.jsonl` files in that conversation's session
+  dir, then drops the in-memory session.
+- `createAgentSession` may select a different model than the session was saved
+  with; `modelFallbackMessage` is logged.
+- Pass `expandPromptTemplates: false` for ordinary messages so a WhatsApp text
+  like `/start` is not interpreted as a pi command. Local commands are handled
+  before the agent; unknown `/…` commands intentionally fall through to pi.
+- `DefaultResourceLoader` loads the user's normal pi setup (extensions, skills,
+  settings). Do not build a custom loader unless there is a reason.
+- `wabox status --json` is not present in every core version; `src/wabox-paths.js`
+  falls back to the human-readable output and then to XDG defaults.
+- The daemon must keep working when `wabox` is not on PATH (explicit env paths).
+
+## Run & verify
+
+```bash
+npm install
+npm test
+npm run check
+
+# end-to-end with a fake inbox/outbox
+tmp=$(mktemp -d); mkdir -p "$tmp/inbox" "$tmp/outbox"
+WABOX_INBOX="$tmp/inbox" WABOX_OUTBOX="$tmp/outbox" \
+WABOX_PI_STATE_DIR="$tmp/state" node bin/wabox-pi.js run
+```
+
+Unit tests must not require model credentials or a live WhatsApp connection.
+E2E agent turns do; use the fake envelope flow from the README and check the
+outbox, or point `WABOX_PI_TOOLS` at a read-only set in a scratch config.
+
+## Commits
+
+Conventional prefixes (`feat:`, `fix:`, `docs:`, `test:`, `chore:`). Mark
+AI-assisted commits with a `Co-Authored-By:` trailer.

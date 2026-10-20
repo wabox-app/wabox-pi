@@ -1,0 +1,43 @@
+{
+  "name": "wabox-pi",
+  "version": "0.1.0",
+  "description": "A wabox harness that connects WhatsApp conversations to pi coding-agent sessions",
+  "type": "module",
+  "main": "src/index.js",
+  "bin": {
+    "wabox-pi": "bin/wabox-pi.js"
+  },
+  "author": "Rodrigo Couto <r@rodg.co>",
+  "license": "MIT",
+  "homepage": "https://github.com/wabox-app/wabox-pi#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/wabox-app/wabox-pi.git"
+  },
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "files": [
+    "bin/",
+    "src/",
+    "templates/",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "start": "node bin/wabox-pi.js run",
+    "dev": "node --watch bin/wabox-pi.js run",
+    "test": "node --test",
+    "check": "node --check bin/wabox-pi.js && node --check src/*.js"
+  },
+  "dependencies": {
+    "@earendil-works/pi-coding-agent": "^1.3.0",
+    "chokidar": "^4.0.3",
+    "typebox": "^1.3.27"
+  },
+  "allowScripts": {
+    "@google/genai@2.21.0": true,
+    "protobufjs@7.6.6": true
+  }
+}
