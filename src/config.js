@@ -52,6 +52,9 @@ function list(value, fallback) {
 // (lists are not merged). Path-valued keys are resolved against the config file.
 const CONVERSATION_KEYS = [
   'workspace',
+  'modelProvider',
+  'model',
+  'thinkingLevel',
   'jail',
   'sandboxBash',
   'sandboxNetwork',
@@ -74,6 +77,9 @@ function normalizeConversation(override, base) {
   if (override.workspaceTemplate !== undefined) {
     out.workspaceTemplate = resolveFrom(base, override.workspaceTemplate);
   }
+  if (override.modelProvider !== undefined) out.modelProvider = String(override.modelProvider);
+  if (override.model !== undefined) out.model = String(override.model);
+  if (override.thinkingLevel !== undefined) out.thinkingLevel = String(override.thinkingLevel);
   if (override.jail !== undefined) out.jail = bool(override.jail, true);
   if (override.sandboxBash !== undefined) out.sandboxBash = String(override.sandboxBash);
   if (override.sandboxNetwork !== undefined) out.sandboxNetwork = bool(override.sandboxNetwork, true);
@@ -165,6 +171,32 @@ export function loadConfig({ cwd = process.cwd() } = {}) {
       ? bool(tr.enabled, true)
       : Boolean(transcription.command || transcription.baseUrl || transcription.provider);
 
+  // Agent web access (see src/web.js), served by the daemon process so the
+  // sandboxed shell can stay offline.
+  const webFile = file?.web ?? {};
+  const fetchCfg = webFile.fetch ?? {};
+  const searchCfg = webFile.search ?? {};
+  const web = {
+    fetch: {
+      enabled: bool(env('WABOX_PI_WEB_FETCH') ?? fetchCfg.enabled, true),
+      allow: list(fetchCfg.allow, []),
+      deny: list(fetchCfg.deny, []),
+      maxBytes: int(fetchCfg.maxBytes, 2_000_000, { min: 1_000 }),
+      timeoutMs: int(fetchCfg.timeoutMs, 20_000, { min: 1_000 }),
+      userAgent: fetchCfg.userAgent ? String(fetchCfg.userAgent) : null,
+    },
+    search: {
+      enabled: bool(env('WABOX_PI_WEB_SEARCH') ?? searchCfg.enabled, true),
+      provider: env('WABOX_PI_SEARCH_PROVIDER') || searchCfg.provider || 'duckduckgo',
+      baseUrl: searchCfg.baseUrl ? String(searchCfg.baseUrl) : null,
+      apiKey: env('WABOX_PI_SEARCH_KEY') || searchCfg.apiKey || null,
+      apiKeyEnv: searchCfg.apiKeyEnv || null,
+      apiKeyFile: searchCfg.apiKeyFile ? resolveFrom(base, searchCfg.apiKeyFile) : null,
+      maxResults: int(searchCfg.maxResults, 5, { min: 1 }),
+      timeoutMs: int(searchCfg.timeoutMs, 20_000, { min: 1_000 }),
+    },
+  };
+
   const config = {
     configFile: file ? configFile : null,
     inboxDir: resolveFrom(base, env('WABOX_INBOX') || file?.inboxDir || wabox.inboxDir),
@@ -193,7 +225,14 @@ export function loadConfig({ cwd = process.cwd() } = {}) {
     tools: list(env('WABOX_PI_TOOLS') ?? file?.tools, DEFAULT_TOOLS),
     excludeTools: list(env('WABOX_PI_EXCLUDE_TOOLS') ?? file?.excludeTools, []),
 
+    // Chat model for the agent. A bare model id (or `provider/id`) plus an
+    // optional thinking level; per-slug overrides win. See resolveCliModel.
+    modelProvider: env('WABOX_PI_MODEL_PROVIDER') || file?.modelProvider || null,
+    model: env('WABOX_PI_MODEL') || file?.model || null,
+    thinkingLevel: env('WABOX_PI_THINKING_LEVEL') || file?.thinkingLevel || null,
+
     transcription,
+    web,
 
     // Keep the agent inside its conversation workspace. `jail` path-jails the
     // file tools; `sandboxBash` decides how bash is contained:

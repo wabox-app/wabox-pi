@@ -112,6 +112,10 @@ async function status(asJson) {
       tools: config.tools,
       excludeTools: config.excludeTools,
       transcription: transcriptionLabel(config.transcription),
+      web: {
+        fetch: Boolean(config.web?.fetch?.enabled),
+        search: config.web?.search?.enabled ? config.web.search.provider : false,
+      },
     },
   };
 
@@ -170,6 +174,10 @@ async function status(asJson) {
   console.log(`  groupPerParticipant : ${config.groupPerParticipant}`);
   console.log(`  tools               : ${config.tools.join(', ')}`);
   console.log(`  transcription       : ${transcriptionLabel(config.transcription)}`);
+  console.log(
+    `  web                 : fetch=${config.web?.fetch?.enabled ? 'on' : 'off'}` +
+      ` search=${config.web?.search?.enabled ? config.web.search.provider : 'off'}`,
+  );
 }
 
 async function run() {

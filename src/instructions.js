@@ -2,7 +2,7 @@
 // instructions still apply). Kept short: the per-turn prompt carries the
 // message; this carries the WhatsApp conventions.
 
-export function systemPromptAppend({ workspace, jailed = false, sandboxedBash = false }) {
+export function systemPromptAppend({ workspace, jailed = false, sandboxedBash = false, web = {} }) {
   let confinement;
   if (jailed && sandboxedBash) {
     confinement = `Stay inside that directory: it is the only place you can write. The file
@@ -38,6 +38,11 @@ You are talking to a person over WhatsApp, not to a terminal user.
   documents. Voice notes are transcribed into the prompt when transcription is
   configured; if a transcript is missing or failed, say so briefly instead of
   pretending you heard it.
+- The shell has **no network access**. For the web use ${
+    [web.fetch ? '`wabox_fetch` to read a URL' : null, web.search ? '`wabox_search` to find pages' : null]
+      .filter(Boolean)
+      .join(' and ') || 'the web tools when available'
+  } instead of curl or wget.
 - Files you attach must be readable paths. Write generated files into your
   workspace first, then pass their paths to \`wabox_send\`.
 - Do not mention internal ids, JIDs, session ids, or tool names to the user.

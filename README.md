@@ -72,6 +72,8 @@ lives at `${XDG_CONFIG_HOME:-~/.config}/wabox-pi/config.json`:
   "groupPerParticipant": false,
   "tools": ["read", "bash", "edit", "write", "grep", "find", "ls"],
   "excludeTools": [],
+  "modelProvider": "openrouter",
+  "model": "moonshotai/kimi-k2.6",
   "logLevel": "info",
   "timezone": "America/Sao_Paulo",
   "jail": true,
@@ -91,7 +93,10 @@ lives at `${XDG_CONFIG_HOME:-~/.config}/wabox-pi/config.json`:
     "5511999998888-ab12cd34ef": {
       "workspace": "./projetos/assistente",
       "tools": ["read", "edit", "write"],
-      "sandboxBash": "bwrap"
+      "sandboxBash": "bwrap",
+      "modelProvider": "anthropic",
+      "model": "claude-sonnet-4-5",
+      "thinkingLevel": "high"
     }
   },
   "tasks": [
@@ -158,13 +163,20 @@ a single chat, keyed by the conversation slug (the folder name under
 }
 ```
 
-Overridable keys: `workspace`, `jail`, `sandboxBash`, `sandboxNetwork`,
-`sandboxDenyRead`, `sandboxAllowRead`, `sandboxBashBin`, `tools`, `excludeTools`,
-`autoReply`, `errorReply`, `ackReact`, `batchWindowMs`, `workspaceTemplate`. Values replace
-the instance value (lists are not merged); relative paths resolve against the
-config file. A per-slug value wins over the environment variable for that
-conversation. `groupPerParticipant` is instance-wide because it changes the slug
-itself.
+Overridable keys: `workspace`, `modelProvider`, `model`, `thinkingLevel`, `jail`,
+`sandboxBash`, `sandboxNetwork`, `sandboxDenyRead`, `sandboxAllowRead`,
+`sandboxBashBin`, `tools`, `excludeTools`, `autoReply`, `errorReply`, `ackReact`,
+`batchWindowMs`, `workspaceTemplate`. Values replace the instance value (lists
+are not merged); relative paths resolve against the config file. A per-slug
+value wins over the environment variable for that conversation.
+`groupPerParticipant` is instance-wide because it changes the slug itself.
+
+The chat model is `modelProvider` + `model`. `model` is a model id (or
+`provider/id`); the pair is resolved against pi's model catalog, so any model
+you can use in pi works. Leave both unset to keep pi's default. `/model` shows
+the configured pair and the model the session is actually using. Changing it
+takes effect on the next session (`/new` or restart); an existing session keeps
+its model until then.
 
 `workspaceOverrides` lets you point specific conversations at existing project
 folders. Sessions, media, and processed envelopes still live under `stateDir`;
@@ -238,6 +250,38 @@ disabled or fails, the prompt says so and the agent is told not to pretend it
 heard the audio. Transcription runs in the daemon process, so the bash sandbox's
 network setting does not affect it.
 
+#### Web access
+
+The agent's shell is intentionally offline (`sandboxNetwork`), so the web is
+reached through two tools served by the daemon process:
+
+- `wabox_fetch <url>` — fetch a page/API and return readable text (HTML is
+  stripped). Follows up to 5 redirects.
+- `wabox_search <query>` — web search; the default provider needs no key.
+
+```json
+{
+  "web": {
+    "fetch": { "enabled": true, "allow": [], "deny": [], "timeoutMs": 20000, "maxBytes": 2000000 },
+    "search": { "enabled": true, "provider": "duckduckgo", "maxResults": 5 }
+  }
+}
+```
+
+| Key | Env | Meaning |
+| --- | --- | --- |
+| `web.fetch.enabled` | `WABOX_PI_WEB_FETCH` | expose `wabox_fetch` (default `true`) |
+| `web.fetch.allow` / `deny` | — | host suffix/glob lists; a non-empty `allow` is the only way in |
+| `web.fetch.maxBytes` / `timeoutMs` | — | response caps (default 2 MB / 20 s) |
+| `web.search.enabled` | `WABOX_PI_WEB_SEARCH` | expose `wabox_search` (default `true`) |
+| `web.search.provider` | `WABOX_PI_SEARCH_PROVIDER` | `duckduckgo` (keyless), `searxng` (`baseUrl`), `brave` (`apiKey`) |
+| `web.search.apiKey` / `apiKeyEnv` / `apiKeyFile` | `WABOX_PI_SEARCH_KEY` | key for keyed providers |
+
+`wabox_fetch` guards against SSRF: only `http(s)`, the host must resolve to
+public addresses (private/loopback/link-local are refused unless the host is in
+`web.fetch.allow`), and every redirect hop is re-checked. Provider endpoints are
+operator-configured and bypass that guard, so a self-hosted SearXNG can be local.
+
 ### Scheduled tasks
 
 `tasks` runs an agent turn on a cron schedule, with no incoming message, so the
@@ -301,6 +345,7 @@ Send these as normal WhatsApp messages:
 | --- | --- |
 | `/help` | command list |
 | `/status` | session id, model, workspace, turn count |
+| `/model` | configured model override and the active model |
 | `/jobs` (or `/tasks`) | scheduled jobs, next run, and which target each uses |
 | `/schedule <cron> <prompt>` | add a job for this chat |
 | `/unschedule <name>` (or `/cancel`) | remove a job created from chat |

@@ -19,7 +19,7 @@ the pi SDK, `chokidar`, and `typebox`.
 | --- | --- |
 | `bin/wabox-pi.js` | Entrypoint; delegates to `src/cli.js`. |
 | `src/cli.js` | `run` / `status` / `version` / `help`. |
-| `src/config.js` | env > `config.json` > defaults; per-slug overrides; state paths. |
+| `src/config.js` | env > `config.json` > defaults; per-slug overrides; state paths; chat model. |
 | `src/wabox-paths.js` | Asks `wabox status` for the inbox/outbox (fallback: XDG). |
 | `src/daemon.js` | Inbox watcher, envelope claiming, per-chat queue runners, task firing. |
 | `src/agent.js` | One `ConversationAgent` per chat: session lifecycle, turns. |
@@ -31,6 +31,7 @@ the pi SDK, `chokidar`, and `typebox`.
 | `src/workspace.js` | Per-conversation dirs; seeds `AGENTS.md` once. |
 | `src/jail.js` | Path-jail file tools; bubblewrap-sandbox `bash`. |
 | `src/transcribe.js` | Inbound-audio transcription (command, OpenAI API, or OpenRouter chat). |
+| `src/web.js` | `wabox_fetch` / `wabox_search` tools (SSRF-guarded, run in-process). |
 | `src/cron.js` | Time-zone-aware 5-field cron parsing + next-run search (pure). |
 | `src/schedule.js` | Scheduled-task normalization, due check, last-run persistence. |
 | `src/tasks.js` | Chat-created jobs (`stateDir/tasks.json`) + task-name derivation. |
@@ -56,6 +57,10 @@ the pi SDK, `chokidar`, and `typebox`.
 - **Tools are the protocol.** `wabox_send` writes jobs during the turn. If the
   agent sends text/files through it, the final assistant text is *not* sent
   again. If it sends nothing, `autoReply` sends the final text (a safety net).
+- **The web is a tool, not the shell.** With `sandboxNetwork` off the shell has
+  no network; `wabox_fetch`/`wabox_search` run in the daemon process and are
+  registered as custom tools. `wabox_fetch` validates the scheme, resolves the
+  host and refuses private addresses, and re-checks every redirect.
 - **Only `wabox-pi` deletes inbox files.** Media is moved into the conversation's
   `media/` folder so the agent has a stable path and the audit trail survives.
 - **State is per conversation.** Sessions, workspace, media, and processed
@@ -88,7 +93,10 @@ the pi SDK, `chokidar`, and `typebox`.
   none exists. `/new` deletes only `.jsonl` files in that conversation's session
   dir, then drops the in-memory session.
 - `createAgentSession` may select a different model than the session was saved
-  with; `modelFallbackMessage` is logged.
+  with; `modelFallbackMessage` is logged. A per-conversation
+  `modelProvider`/`model` is resolved with `resolveCliModel` against a
+  `ModelRuntime` and passed as `model`, which overrides the saved session model
+  (`if (!model && hasExistingSession ...)`).
 - Pass `expandPromptTemplates: false` for ordinary messages so a WhatsApp text
   like `/start` is not interpreted as a pi command. Local commands are handled
   before the agent; unknown `/…` commands intentionally fall through to pi.

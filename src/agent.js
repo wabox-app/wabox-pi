@@ -11,6 +11,8 @@ import {
   createAgentSession,
   DefaultResourceLoader,
   getAgentDir,
+  ModelRuntime,
+  resolveCliModel,
   SessionManager,
 } from '@earendil-works/pi-coding-agent';
 import { buildTaskPrompt, buildTurnPrompt } from './prompt.js';
@@ -22,6 +24,7 @@ import { nextCronDate } from './cron.js';
 import { formatJobs } from './schedule.js';
 import { jobName, storedTask } from './tasks.js';
 import { isAudio, transcribeFile, transcriptionConfigured } from './transcribe.js';
+import { createFetchTool, createSearchTool } from './web.js';
 import { resolveBashTool, workspaceJailExtension } from './jail.js';
 
 export class ConversationAgent {
@@ -32,6 +35,7 @@ export class ConversationAgent {
     this.paths = paths;
     this.jobs = jobs ?? null;
     this.session = null;
+    this.modelRuntime = null;
     this.modelFallbackMessage = null;
     this.lastUsed = Date.now();
     this.turns = 0;
@@ -61,6 +65,12 @@ export class ConversationAgent {
     if (bashTool) customTools.push(bashTool);
     const sandboxedBash = Boolean(bashTool);
 
+    // Web access runs in this process, not the sandboxed shell.
+    const webFetch = Boolean(this.config.web?.fetch?.enabled);
+    const webSearch = Boolean(this.config.web?.search?.enabled);
+    if (webFetch) customTools.push(createFetchTool({ config: this.config, log: this.log }));
+    if (webSearch) customTools.push(createSearchTool({ config: this.config, log: this.log }));
+
     const loader = new DefaultResourceLoader({
       cwd: this.paths.workspace,
       agentDir: getAgentDir(),
@@ -83,6 +93,7 @@ export class ConversationAgent {
           workspace: this.paths.workspace,
           jailed,
           sandboxedBash,
+          web: { fetch: webFetch, search: webSearch },
         }),
       ],
     });
@@ -93,12 +104,17 @@ export class ConversationAgent {
       this.paths.sessions,
     );
 
+    const desired = await this.desiredModel();
+    const thinkingLevel = this.config.thinkingLevel ?? desired?.thinkingLevel;
+
     const { session, modelFallbackMessage } = await createAgentSession({
       cwd: this.paths.workspace,
       sessionManager,
       resourceLoader: loader,
-      tools: [...new Set([...this.config.tools, 'wabox_send'])],
+      tools: [...new Set([...this.config.tools, ...customTools.map((tool) => tool.name)])],
       ...(this.config.excludeTools.length ? { excludeTools: this.config.excludeTools } : {}),
+      ...(desired ? { model: desired.model, modelRuntime: desired.runtime } : {}),
+      ...(thinkingLevel ? { thinkingLevel } : {}),
       customTools,
     });
 
@@ -122,6 +138,27 @@ export class ConversationAgent {
       `[${this.slug}] session ready (${session.sessionId}, model ${session.model?.id ?? 'default'})`,
     );
     return session;
+  }
+
+  // Resolve the per-conversation model override (config.modelProvider/model)
+  // against pi's model catalog. Returns null to keep pi's default selection.
+  async desiredModel() {
+    const provider = this.config.modelProvider || undefined;
+    const modelId = this.config.model || undefined;
+    if (!provider && !modelId) return null;
+
+    this.modelRuntime ??= await ModelRuntime.create();
+    const resolved = resolveCliModel({
+      cliProvider: provider,
+      cliModel: modelId,
+      modelRuntime: this.modelRuntime,
+    });
+    if (resolved.error) {
+      this.log.warn(`[${this.slug}] model override ignored: ${resolved.error}`);
+      return null;
+    }
+    if (resolved.warning) this.log.warn(`[${this.slug}] model: ${resolved.warning}`);
+    return { model: resolved.model, thinkingLevel: resolved.thinkingLevel, runtime: this.modelRuntime };
   }
 
   async handleBatch(envelopes) {
@@ -296,6 +333,9 @@ export class ConversationAgent {
       case 'jobs':
         reply = await this.jobsText();
         break;
+      case 'model':
+        reply = this.modelText();
+        break;
       case 'schedule':
         reply = await this.scheduleJob(command.args, envelope);
         break;
@@ -328,7 +368,27 @@ export class ConversationAgent {
     } else {
       lines.push('session: not started');
     }
+    if (this.config.modelProvider || this.config.model) {
+      lines.push(`model override: ${this.config.modelProvider ?? '?'}/${this.config.model ?? '?'}`);
+    }
+    if (this.config.thinkingLevel) lines.push(`thinking: ${this.config.thinkingLevel}`);
     if (this.modelFallbackMessage) lines.push(`note: ${this.modelFallbackMessage}`);
+    return lines.join('\n');
+  }
+
+  modelText() {
+    const lines = ['*Model*'];
+    const configured =
+      this.config.modelProvider || this.config.model
+        ? `${this.config.modelProvider ?? '?'}/${this.config.model ?? '?'}`
+        : '(pi default)';
+    lines.push(`configured: ${configured}`);
+    if (this.config.thinkingLevel) lines.push(`thinking: ${this.config.thinkingLevel}`);
+    lines.push(
+      this.session?.model
+        ? `active: ${this.session.model.provider}/${this.session.model.id}`
+        : 'active: not started',
+    );
     return lines.join('\n');
   }
 

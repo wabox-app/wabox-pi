@@ -79,6 +79,53 @@ test('conversationConfig returns the instance config when nothing is overridden'
   assert.equal(conversationConfig(config, 'slug-a'), config);
 });
 
+test('per-slug model overrides merge over the instance model', () => {
+  const config = instance({
+    modelProvider: 'openrouter',
+    model: 'moonshotai/kimi-k2.6',
+    conversations: {
+      'slug-a': { modelProvider: 'anthropic', model: 'claude-sonnet-4-5', thinkingLevel: 'high' },
+    },
+  });
+  const merged = conversationConfig(config, 'slug-a');
+  assert.equal(merged.modelProvider, 'anthropic');
+  assert.equal(merged.model, 'claude-sonnet-4-5');
+  assert.equal(merged.thinkingLevel, 'high');
+  // Another slug keeps the instance default.
+  assert.equal(conversationConfig(config, 'slug-b').modelProvider, 'openrouter');
+});
+
+test('loadConfig parses model settings and per-slug overrides', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'wabox-cfg-'));
+  const cfg = path.join(dir, 'config.json');
+  await fs.writeFile(
+    cfg,
+    JSON.stringify({
+      inboxDir: 'i',
+      outboxDir: 'o',
+      stateDir: 's',
+      modelProvider: 'openrouter',
+      model: 'moonshotai/kimi-k2.6',
+      conversations: { 'slug-a': { model: 'google/gemini-3.1-flash-lite', thinkingLevel: 'low' } },
+    }),
+  );
+  const previous = process.env.WABOX_PI_CONFIG;
+  process.env.WABOX_PI_CONFIG = cfg;
+  try {
+    const config = loadConfig();
+    assert.equal(config.modelProvider, 'openrouter');
+    assert.equal(config.model, 'moonshotai/kimi-k2.6');
+    const merged = conversationConfig(config, 'slug-a');
+    assert.equal(merged.model, 'google/gemini-3.1-flash-lite');
+    assert.equal(merged.modelProvider, 'openrouter'); // inherited
+    assert.equal(merged.thinkingLevel, 'low');
+  } finally {
+    if (previous === undefined) delete process.env.WABOX_PI_CONFIG;
+    else process.env.WABOX_PI_CONFIG = previous;
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});
+
 test('per-slug values replace instance values', () => {
   const config = instance({
     conversations: {
