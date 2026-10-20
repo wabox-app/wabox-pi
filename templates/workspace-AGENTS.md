@@ -2,7 +2,9 @@
 
 This folder is the working directory for one WhatsApp conversation. Messages
 you exchange are delivered by the `wabox_send` tool; files you want to attach
-must exist here (or at an absolute path) before you send them.
+must exist here before you send them. Stay inside this folder: the file tools
+reject paths outside it, and shell commands run in a sandbox where the rest of
+the machine is read-only.
 
 ## How to behave
 

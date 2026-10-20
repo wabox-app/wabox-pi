@@ -1,0 +1,111 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+import {
+  buildBwrapCommand,
+  resolveInside,
+  shellQuote,
+  toolPathArgs,
+  workspaceJailExtension,
+} from '../src/jail.js';
+
+async function scratch() {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'wabox-jail-'));
+  const workspace = path.join(root, 'workspace');
+  const media = path.join(root, 'media');
+  const outside = path.join(root, 'outside');
+  await fs.mkdir(workspace, { recursive: true });
+  await fs.mkdir(media, { recursive: true });
+  await fs.mkdir(outside, { recursive: true });
+  return { root, workspace, media, outside };
+}
+
+test('resolveInside allows paths under a root', async () => {
+  const { workspace } = await scratch();
+  const check = await resolveInside([workspace], 'notes/todo.txt', workspace);
+  assert.equal(check.inside, true);
+  assert.equal(check.path, path.join(workspace, 'notes/todo.txt'));
+});
+
+test('resolveInside blocks paths outside every root', async () => {
+  const { workspace, outside } = await scratch();
+  const check = await resolveInside([workspace], path.join(outside, 'secret'), workspace);
+  assert.equal(check.inside, false);
+});
+
+test('resolveInside allows an extra read root', async () => {
+  const { workspace, media, outside } = await scratch();
+  const attachment = path.join(media, 'photo.jpg');
+  await fs.writeFile(attachment, 'x');
+  const allowed = await resolveInside([workspace, media], attachment, workspace);
+  assert.equal(allowed.inside, true);
+  const denied = await resolveInside([workspace, media], path.join(outside, 'x'), workspace);
+  assert.equal(denied.inside, false);
+});
+
+test('resolveInside catches a symlink escape', async () => {
+  const { workspace } = await scratch();
+  await fs.symlink(os.tmpdir(), path.join(workspace, 'sneaky'));
+  const check = await resolveInside([workspace], 'sneaky/passwd', workspace);
+  assert.equal(check.inside, false);
+});
+
+test('resolveInside checks a not-yet-existing file through its parent', async () => {
+  const { workspace } = await scratch();
+  const check = await resolveInside([workspace], 'brand/new/file.txt', workspace);
+  assert.equal(check.inside, true);
+});
+
+test('toolPathArgs maps tools to their path arguments', () => {
+  assert.deepEqual(toolPathArgs('read', { path: 'a.txt' }, '/w'), [
+    { key: 'path', value: 'a.txt', base: '/w' },
+  ]);
+  assert.deepEqual(toolPathArgs('ls', {}, '/w'), []);
+  assert.deepEqual(toolPathArgs('wabox_send', { files: ['a', '', 'b'] }, '/w'), [
+    { key: 'files', value: 'a', base: '/w' },
+    { key: 'files', value: 'b', base: '/w' },
+  ]);
+  assert.deepEqual(toolPathArgs('bash', { command: 'ls' }, '/w'), []);
+});
+
+test('the extension blocks path escapes and allows in-workspace reads', async () => {
+  const { workspace, outside } = await scratch();
+  const handlers = [];
+  const pi = { on: (event, handler) => handlers.push([event, handler]) };
+  workspaceJailExtension({ workspace })(pi);
+
+  const [, handler] = handlers.find(([event]) => event === 'tool_call');
+  const blocked = await handler({ toolName: 'read', input: { path: path.join(outside, 'x') } });
+  assert.equal(blocked.block, true);
+  assert.match(blocked.reason, /outside your workspace/);
+
+  const allowed = await handler({ toolName: 'read', input: { path: 'notes.txt' } });
+  assert.equal(allowed, undefined);
+});
+
+test('buildBwrapCommand makes the host read-only and the workspace writable', () => {
+  const command = buildBwrapCommand({ workspace: '/home/me/ws', command: 'echo hi' });
+  assert.ok(command.includes("'--ro-bind' '/' '/'"));
+  assert.ok(command.includes("'--bind' '/home/me/ws' '/home/me/ws'"));
+  assert.ok(command.includes("'--tmpfs' '/tmp'"));
+  assert.ok(command.includes("'--die-with-parent'"));
+  assert.ok(!command.includes('--unshare-net'));
+  assert.ok(command.endsWith("'/bin/bash' '-c' 'echo hi'"));
+});
+
+test('buildBwrapCommand can isolate the network and hide directories', () => {
+  const command = buildBwrapCommand({
+    workspace: '/ws',
+    command: 'curl x',
+    network: false,
+    denyRead: ['/home/me/.ssh'],
+  });
+  assert.ok(command.includes("'--unshare-net'"));
+  assert.ok(command.includes("'--tmpfs' '/home/me/.ssh'"));
+});
+
+test('shellQuote survives embedded single quotes', () => {
+  assert.equal(shellQuote(`it's fine`), `'it'\\''s fine'`);
+});

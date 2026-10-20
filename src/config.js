@@ -15,6 +15,19 @@ const DEFAULT_WORKSPACE_TEMPLATE = path.resolve(SRC_DIR, '../templates/workspace
 
 const DEFAULT_TOOLS = ['read', 'bash', 'edit', 'write', 'grep', 'find', 'ls'];
 
+// Hidden from sandboxed bash. `stateDir` is added at session time, and entries
+// that do not exist on the host are skipped.
+const DEFAULT_SANDBOX_DENY_READ = [
+  '~/.ssh',
+  '~/.aws',
+  '~/.gnupg',
+  '~/.config/gh',
+  '~/.docker',
+  '~/.netrc',
+  '~/.npmrc',
+  '~/.pi',
+];
+
 function bool(value, fallback) {
   if (value === undefined || value === null || value === '') return fallback;
   if (typeof value === 'boolean') return value;
@@ -88,6 +101,23 @@ export function loadConfig({ cwd = process.cwd() } = {}) {
 
     tools: list(env('WABOX_PI_TOOLS') ?? file?.tools, DEFAULT_TOOLS),
     excludeTools: list(env('WABOX_PI_EXCLUDE_TOOLS') ?? file?.excludeTools, []),
+
+    // Keep the agent inside its conversation workspace. `jail` path-jails the
+    // file tools; `sandboxBash` decides how bash is contained:
+    //   off   - no sandbox
+    //   auto  - bubblewrap when available, otherwise warn and run unsandboxed
+    //   bwrap - bubblewrap required; refuse to start a session without it
+    jail: bool(env('WABOX_PI_JAIL') ?? file?.jail, true),
+    sandboxBash: env('WABOX_PI_SANDBOX_BASH') || file?.sandboxBash || 'auto',
+    sandboxNetwork: bool(env('WABOX_PI_SANDBOX_NET') ?? file?.sandboxNetwork, true),
+    sandboxBashBin: env('WABOX_PI_SANDBOX_BASH_BIN') || file?.sandboxBashBin || 'bwrap',
+    sandboxDenyRead: list(
+      env('WABOX_PI_SANDBOX_DENY_READ') ?? file?.sandboxDenyRead,
+      DEFAULT_SANDBOX_DENY_READ,
+    ),
+
+    // Map conversation slugs to custom workspace directories (absolute or relative to config file).
+    workspaceOverrides: file?.workspaceOverrides ?? {},
 
     // Seeded into a fresh conversation workspace as AGENTS.md. A relative
     // value resolves against the config file; the built-in default is absolute.

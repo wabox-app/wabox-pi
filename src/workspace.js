@@ -14,9 +14,10 @@ import path from 'node:path';
 
 export function conversationPaths(config, slug) {
   const root = path.join(config.conversationsDir, slug);
+  const override = config.workspaceOverrides?.[slug];
   return {
     root,
-    workspace: path.join(root, 'workspace'),
+    workspace: override ? path.resolve(override) : path.join(root, 'workspace'),
     sessions: path.join(root, 'sessions'),
     media: path.join(root, 'media'),
     processed: path.join(root, 'processed'),

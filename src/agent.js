@@ -18,6 +18,7 @@ import { systemPromptAppend } from './instructions.js';
 import { createSendTool } from './tools.js';
 import { replyJob, writeJob } from './outbox.js';
 import { HELP, parseLocalCommand } from './commands.js';
+import { resolveBashTool, workspaceJailExtension } from './jail.js';
 
 export class ConversationAgent {
   constructor({ config, log, slug, paths }) {
@@ -41,12 +42,42 @@ export class ConversationAgent {
   async ensureSession() {
     if (this.session) return this.session;
 
+    const jailed = this.config.jail;
+
+    // Resolve bash first: in "bwrap" mode a missing bubblewrap throws here,
+    // before a session is created with an unsandboxed shell.
+    const customTools = [createSendTool({ config: this.config, turn: this.turn, log: this.log })];
+    const bashTool = resolveBashTool({
+      config: this.config,
+      workspace: this.paths.workspace,
+      log: this.log,
+    });
+    if (bashTool) customTools.push(bashTool);
+    const sandboxedBash = Boolean(bashTool);
+
     const loader = new DefaultResourceLoader({
       cwd: this.paths.workspace,
       agentDir: getAgentDir(),
+      ...(jailed
+        ? {
+            extensionFactories: [
+              workspaceJailExtension({
+                workspace: this.paths.workspace,
+                // Inbound media lives outside the workspace; the model needs to
+                // read attachments the harness already saved there.
+                readRoots: [this.paths.media],
+                log: this.log,
+              }),
+            ],
+          }
+        : {}),
       appendSystemPromptOverride: (base) => [
         ...base,
-        systemPromptAppend({ workspace: this.paths.workspace }),
+        systemPromptAppend({
+          workspace: this.paths.workspace,
+          jailed,
+          sandboxedBash,
+        }),
       ],
     });
     await loader.reload();
@@ -62,7 +93,7 @@ export class ConversationAgent {
       resourceLoader: loader,
       tools: [...new Set([...this.config.tools, 'wabox_send'])],
       ...(this.config.excludeTools.length ? { excludeTools: this.config.excludeTools } : {}),
-      customTools: [createSendTool({ config: this.config, turn: this.turn, log: this.log })],
+      customTools,
     });
 
     this.modelFallbackMessage = modelFallbackMessage;

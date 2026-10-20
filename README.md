@@ -72,7 +72,14 @@ lives at `${XDG_CONFIG_HOME:-~/.config}/wabox-pi/config.json`:
   "groupPerParticipant": false,
   "tools": ["read", "bash", "edit", "write", "grep", "find", "ls"],
   "excludeTools": [],
-  "logLevel": "info"
+  "logLevel": "info",
+  "jail": true,
+  "sandboxBash": "auto",
+  "sandboxNetwork": true,
+  "sandboxDenyRead": ["~/.ssh", "~/.aws", "~/.gnupg", "~/.pi"],
+  "workspaceOverrides": {
+    "meu-jid@s.whatsapp.net": "/home/rod/projetos/whatsapp-agent"
+  }
 }
 ```
 
@@ -88,7 +95,17 @@ lives at `${XDG_CONFIG_HOME:-~/.config}/wabox-pi/config.json`:
 | `groupPerParticipant` | `WABOX_PI_GROUP_PER_PARTICIPANT` | `false` | one session per group sender instead of per group |
 | `tools` | `WABOX_PI_TOOLS` | read,bash,edit,write,grep,find,ls | pi tool allowlist |
 | `excludeTools` | `WABOX_PI_EXCLUDE_TOOLS` | `[]` | pi tool denylist |
+| `jail` | `WABOX_PI_JAIL` | `true` | path-jail file tools to the conversation workspace |
+| `sandboxBash` | `WABOX_PI_SANDBOX_BASH` | `auto` | `off`, `auto` (bubblewrap if present, else warn), `bwrap` (required) |
+| `sandboxNetwork` | `WABOX_PI_SANDBOX_NET` | `true` | keep network access inside the bash sandbox |
+| `sandboxDenyRead` | `WABOX_PI_SANDBOX_DENY_READ` | sensible secrets list | dirs hidden from sandboxed bash |
+| `sandboxBashBin` | `WABOX_PI_SANDBOX_BASH_BIN` | `bwrap` | bubblewrap binary |
+| `workspaceOverrides` | — | `{}` | map conversation slug → custom workspace directory |
 | `logLevel` | `WABOX_PI_LOG_LEVEL` | `info` | `debug`, `info`, `warn`, `error` |
+
+`workspaceOverrides` lets you point specific conversations at existing project
+folders. Sessions, media, and processed envelopes still live under `stateDir`;
+only the harness working directory (`cwd`) is redirected.
 
 Without `inboxDir`/`outboxDir`, `wabox-pi` asks `wabox status` (and
 `wabox status --json` on newer cores) before falling back to XDG defaults.
@@ -109,18 +126,34 @@ Unrecognised `/…` messages are passed to pi, so pi slash commands (for example
 
 ## Security
 
-The agent runs with the pi tools you enable. The default set includes `bash`,
-so it can run commands as the daemon user — the per-conversation workspace is
-its working directory, **not a sandbox**. Two consequences:
+The agent runs with the pi tools you enable; pi itself has no built-in sandbox
+(see pi's `docs/security.md`). wabox-pi adds two layers to keep a conversation
+inside its workspace:
+
+1. **File tools are path-jailed.** With `jail: true` (default), a `tool_call`
+   extension blocks `read`, `edit`, `write`, `grep`, `find`, `ls`, and the
+   attachments of `wabox_send` when their path resolves outside the workspace —
+   including through symlinks. Inbound attachments are the one exception: the
+   `read` family may also read the conversation's `media/` folder.
+2. **`bash` runs under bubblewrap.** `sandboxBash: "auto"` (default) wraps every
+   shell command with `bwrap` when it is installed: the host is read-only, only
+   the workspace is writable, `$HOME`/XDG dirs are redirected into the
+   workspace, and `sandboxDenyRead` dirs (plus the state dir) are hidden. Set
+   `sandboxBash: "bwrap"` to refuse to start a session when bubblewrap is
+   missing instead of falling back to an unsandboxed shell.
+
+Even so:
 
 - Use wabox's allow list (`wabox allow`) so only trusted numbers can reach the
   agent. wabox-pi assumes every envelope that arrives is permitted.
-- Restrict capabilities if you do not want that: `WABOX_PI_TOOLS=read,ls` (or an
-  `excludeTools` list) trims the tool set. There is no interactive per-tool
-  approval over WhatsApp yet; tool calls execute during the turn.
+- `jail` and the bash sandbox are not a replacement for running the daemon as a
+  dedicated user or in a container; they constrain the agent, not the daemon.
+- Restrict capabilities further with `WABOX_PI_TOOLS=read,ls` (or an
+  `excludeTools` list). There is no interactive per-tool approval over WhatsApp
+  yet; tool calls execute during the turn.
 
 The harness itself never sends outbox files from arbitrary paths except the ones
-the agent names; keep attachments inside the workspace to make review easy.
+the agent names; the file jail keeps those inside the workspace.
 
 ## How it works
 

@@ -2,7 +2,18 @@
 // instructions still apply). Kept short: the per-turn prompt carries the
 // message; this carries the WhatsApp conventions.
 
-export function systemPromptAppend({ workspace }) {
+export function systemPromptAppend({ workspace, jailed = false, sandboxedBash = false }) {
+  let confinement;
+  if (jailed && sandboxedBash) {
+    confinement = `Stay inside that directory: it is the only place you can write. The file
+tools reject any path outside it, and shell commands run in a sandbox where the
+rest of the machine is read-only.`;
+  } else if (jailed) {
+    confinement = `Stay inside that directory. The file tools reject any path outside it, so
+write anything you need there and pass those paths to \`wabox_send\`.`;
+  } else {
+    confinement = `Treat it as your project root and do not touch anything outside it.`;
+  }
   return `
 ## WhatsApp reply channel (wabox)
 
@@ -33,7 +44,8 @@ You are talking to a person over WhatsApp, not to a terminal user.
 Your workspace for this conversation is:
 ${workspace}
 
-You may keep durable notes in AGENTS.md in that workspace. Do not modify anything
-outside it unless the user explicitly asks.
+${confinement}
+
+You may keep durable notes in AGENTS.md in that workspace.
 `.trim();
 }

@@ -29,6 +29,7 @@ the pi SDK, `chokidar`, and `typebox`.
 | `src/prompt.js` | Inbox envelope → per-turn prompt (pure). |
 | `src/instructions.js` | WhatsApp-etiquette section appended to pi's system prompt. |
 | `src/workspace.js` | Per-conversation dirs; seeds `AGENTS.md` once. |
+| `src/jail.js` | Path-jail file tools; bubblewrap-sandbox `bash`. |
 | `src/routing.js` | Conversation key + filesystem-safe slug. |
 | `src/envelope.js` | Envelope parsing/validation and reply targeting. |
 | `src/fsutil.js` | Cross-filesystem move (inbox and state may be different mounts). |
@@ -56,6 +57,10 @@ the pi SDK, `chokidar`, and `typebox`.
 - **State is per conversation.** Sessions, workspace, media, and processed
   envelopes live under `conversations/<slug>/`; `/new` only clears that chat's
   session files.
+- **The agent stays in its workspace.** `src/jail.js` blocks file-tool paths
+  that resolve outside the workspace (plus the conversation's `media/`) via a
+  pi `tool_call` handler, and wraps `bash` in bubblewrap. `workspaceOverrides`
+  redirects `cwd`; it must not defeat the jail's read roots.
 
 ## Gotchas
 
