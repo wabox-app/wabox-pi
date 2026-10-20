@@ -21,6 +21,7 @@ import { HELP, parseLocalCommand, parseScheduleCommand } from './commands.js';
 import { nextCronDate } from './cron.js';
 import { formatJobs } from './schedule.js';
 import { jobName, storedTask } from './tasks.js';
+import { isAudio, transcribeFile, transcriptionConfigured } from './transcribe.js';
 import { resolveBashTool, workspaceJailExtension } from './jail.js';
 
 export class ConversationAgent {
@@ -153,6 +154,8 @@ export class ConversationAgent {
         expandPromptTemplates = true;
       }
 
+      await this.transcribeBatch(envelopes);
+
       const session = await this.ensureSession();
       const prompt = buildTurnPrompt(envelopes);
       const started = Date.now();
@@ -180,6 +183,37 @@ export class ConversationAgent {
     } finally {
       // No tool call may outlive the turn that supplied its target.
       this.turn.envelope = null;
+    }
+  }
+
+  // Transcribe inbound audio before the turn. Doing it here (per conversation)
+  // rather than at claim time keeps a slow network call from blocking other
+  // chats' inbox files.
+  async transcribeBatch(envelopes) {
+    const config = this.config.transcription;
+    if (!transcriptionConfigured(config)) return;
+
+    for (const envelope of envelopes) {
+      const media = envelope.media;
+      if (!media?.localPath || media.error) continue;
+      if (media.transcript || media.transcriptError) continue;
+      if (!isAudio(media)) continue;
+
+      try {
+        const { text, model } = await transcribeFile({
+          config,
+          filePath: media.localPath,
+          log: this.log,
+        });
+        envelope.media = { ...media, transcript: text, transcriptModel: model };
+        await fs
+          .writeFile(`${media.localPath}.txt`, `${text}\n`)
+          .catch((err) => this.log.warn(`[${this.slug}] transcript sidecar failed: ${err.message}`));
+        this.log.info(`[${this.slug}] transcribed ${path.basename(media.localPath)} (${model})`);
+      } catch (err) {
+        envelope.media = { ...media, transcriptError: err.message };
+        this.log.warn(`[${this.slug}] transcription failed: ${err.message}`);
+      }
     }
   }
 

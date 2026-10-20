@@ -30,6 +30,7 @@ the pi SDK, `chokidar`, and `typebox`.
 | `src/instructions.js` | WhatsApp-etiquette section appended to pi's system prompt. |
 | `src/workspace.js` | Per-conversation dirs; seeds `AGENTS.md` once. |
 | `src/jail.js` | Path-jail file tools; bubblewrap-sandbox `bash`. |
+| `src/transcribe.js` | Inbound-audio transcription (command, OpenAI API, or OpenRouter chat). |
 | `src/cron.js` | Time-zone-aware 5-field cron parsing + next-run search (pure). |
 | `src/schedule.js` | Scheduled-task normalization, due check, last-run persistence. |
 | `src/tasks.js` | Chat-created jobs (`stateDir/tasks.json`) + task-name derivation. |
@@ -93,6 +94,13 @@ the pi SDK, `chokidar`, and `typebox`.
   before the agent; unknown `/…` commands intentionally fall through to pi.
 - `DefaultResourceLoader` loads the user's normal pi setup (extensions, skills,
   settings). Do not build a custom loader unless there is a reason.
+- pi's model input modalities are `text` and `image` only (`ModelInputModality`),
+  so audio must be transcribed before the turn. Transcription runs in the agent
+  (`transcribeBatch`) so a slow STT call does not block the inbox claim chain.
+- `transcription.provider: "openrouter"` sends the audio as an `input_audio`
+  content part over chat completions and, with no explicit key, reuses pi's
+  stored credential via `readStoredCredential` (`~/.pi/agent/auth.json`). OpenAI
+  `/audio/transcriptions` and local `command` transcribers are the other modes.
 - `wabox status --json` is not present in every core version; `src/wabox-paths.js`
   falls back to the human-readable output and then to XDG defaults.
 - The daemon must keep working when `wabox` is not on PATH (explicit env paths).

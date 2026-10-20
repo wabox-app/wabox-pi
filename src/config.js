@@ -139,6 +139,32 @@ export function loadConfig({ cwd = process.cwd() } = {}) {
   );
   const templateSetting = env('WABOX_PI_WORKSPACE_TEMPLATE') ?? file?.workspaceTemplate;
 
+  // Inbound-audio transcription (see src/transcribe.js). Enabled by default
+  // whenever a backend (command or endpoint) is configured.
+  const tr = file?.transcription ?? {};
+  const trProvider = env('WABOX_PI_TRANSCRIBE_PROVIDER') || tr.provider || null;
+  const transcription = {
+    provider: trProvider,
+    command: env('WABOX_PI_TRANSCRIBE_CMD') || tr.command || null,
+    baseUrl: env('WABOX_PI_TRANSCRIBE_URL') || tr.baseUrl || null,
+    model:
+      env('WABOX_PI_TRANSCRIBE_MODEL') ||
+      tr.model ||
+      (trProvider === 'openrouter' ? 'google/gemini-3.1-flash-lite' : 'whisper-1'),
+    apiKey: env('WABOX_PI_TRANSCRIBE_KEY') || tr.apiKey || null,
+    apiKeyEnv: tr.apiKeyEnv || null,
+    apiKeyFile: tr.apiKeyFile ? resolveFrom(base, tr.apiKeyFile) : null,
+    piProvider: tr.piProvider || null,
+    usePiAuth: tr.usePiAuth !== false,
+    language: env('WABOX_PI_TRANSCRIBE_LANG') || tr.language || null,
+    prompt: tr.prompt || null,
+    timeoutMs: int(tr.timeoutMs, 120_000, { min: 1_000 }),
+  };
+  transcription.enabled =
+    tr.enabled !== undefined
+      ? bool(tr.enabled, true)
+      : Boolean(transcription.command || transcription.baseUrl || transcription.provider);
+
   const config = {
     configFile: file ? configFile : null,
     inboxDir: resolveFrom(base, env('WABOX_INBOX') || file?.inboxDir || wabox.inboxDir),
@@ -166,6 +192,8 @@ export function loadConfig({ cwd = process.cwd() } = {}) {
 
     tools: list(env('WABOX_PI_TOOLS') ?? file?.tools, DEFAULT_TOOLS),
     excludeTools: list(env('WABOX_PI_EXCLUDE_TOOLS') ?? file?.excludeTools, []),
+
+    transcription,
 
     // Keep the agent inside its conversation workspace. `jail` path-jails the
     // file tools; `sandboxBash` decides how bash is contained:

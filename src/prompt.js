@@ -21,7 +21,10 @@ function mediaLine(media) {
     media.mimetype ? media.mimetype : null,
     media.originalName ? `original name: ${media.originalName}` : null,
   ].filter(Boolean);
-  return bits.join(' — ');
+  const base = bits.join(' — ');
+  if (media.transcript) return `${base}\nTranscript: ${media.transcript}`;
+  if (media.transcriptError) return `${base}\nTranscription failed: ${media.transcriptError}`;
+  return base;
 }
 
 function one(envelope, index) {

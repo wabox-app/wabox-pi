@@ -6,6 +6,7 @@ import { acquireLock } from './lock.js';
 import { startDaemon } from './daemon.js';
 import { nextCronDate } from './cron.js';
 import { normalizeTasks } from './schedule.js';
+import { transcriptionLabel } from './transcribe.js';
 import { APP, VERSION } from './version.js';
 
 async function dynamicTasks(config) {
@@ -110,6 +111,7 @@ async function status(asJson) {
       groupPerParticipant: config.groupPerParticipant,
       tools: config.tools,
       excludeTools: config.excludeTools,
+      transcription: transcriptionLabel(config.transcription),
     },
   };
 
@@ -167,6 +169,7 @@ async function status(asJson) {
   console.log(`  ackReact            : ${config.ackReact || '(none)'}`);
   console.log(`  groupPerParticipant : ${config.groupPerParticipant}`);
   console.log(`  tools               : ${config.tools.join(', ')}`);
+  console.log(`  transcription       : ${transcriptionLabel(config.transcription)}`);
 }
 
 async function run() {

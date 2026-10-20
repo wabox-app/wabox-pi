@@ -79,6 +79,11 @@ lives at `${XDG_CONFIG_HOME:-~/.config}/wabox-pi/config.json`:
   "sandboxNetwork": true,
   "sandboxDenyRead": ["~/.ssh", "~/.aws", "~/.gnupg", "~/.pi"],
   "sandboxAllowRead": [],
+  "transcription": {
+    "baseUrl": "https://api.groq.com/openai/v1/audio/transcriptions",
+    "model": "whisper-large-v3",
+    "apiKeyFile": "stt.key"
+  },
   "workspaceOverrides": {
     "277880256909343-2a21b939c8": "/home/rod/Valter"
   },
@@ -120,6 +125,7 @@ lives at `${XDG_CONFIG_HOME:-~/.config}/wabox-pi/config.json`:
 | `sandboxBashBin` | `WABOX_PI_SANDBOX_BASH_BIN` | `bwrap` | bubblewrap binary |
 | `conversations` | — | `{}` | per-slug overrides (see below) |
 | `workspaceOverrides` | — | `{}` | older shortcut for `conversations.<slug>.workspace` |
+| `transcription` | — | disabled | inbound audio transcription (see below) |
 | `tasks` | — | `[]` | scheduled tasks (see below) |
 | `timezone` | `WABOX_PI_TIMEZONE` | system | default IANA time zone for `tasks` cron |
 | `schedulerTickMs` | `WABOX_PI_SCHEDULER_TICK_MS` | `20000` | how often the scheduler checks for due tasks |
@@ -166,6 +172,71 @@ only the harness working directory (`cwd`) is redirected.
 
 Without `inboxDir`/`outboxDir`, `wabox-pi` asks `wabox status` (and
 `wabox status --json` on newer cores) before falling back to XDG defaults.
+
+#### Audio transcription
+
+pi's model input is text and images only, so a voice note cannot be handed to
+the agent directly. wabox-pi transcribes it first and puts the transcript in the
+turn prompt (and a `<file>.txt` sidecar next to the media). Pick one backend.
+
+The default is **OpenRouter**, which needs no extra key when you already signed
+in to pi: the stored provider credential is reused (an `openrouter` model that
+accepts audio, sent as an `input_audio` part).
+
+```json
+{
+  "transcription": {
+    "provider": "openrouter",
+    "model": "google/gemini-3.1-flash-lite",
+    "language": "pt"
+  }
+}
+```
+
+An OpenAI-compatible transcription endpoint (OpenAI, Groq, …):
+
+```json
+{
+  "transcription": {
+    "provider": "openai",
+    "baseUrl": "https://api.groq.com/openai/v1/audio/transcriptions",
+    "model": "whisper-large-v3",
+    "apiKeyFile": "stt.key"
+  }
+}
+```
+
+A local command (same contract as `wabox-bot`; the ready-made plugins work):
+
+```json
+{
+  "transcription": {
+    "command": "~/.local/share/wabox-bot/plugins/faster-whisper/transcribe.sh"
+  }
+}
+```
+
+| Key | Env | Meaning |
+| --- | --- | --- |
+| `enabled` | `WABOX_PI_TRANSCRIBE_*` | default `true` once a backend is set |
+| `provider` | `WABOX_PI_TRANSCRIBE_PROVIDER` | `openrouter` (chat + `input_audio`) or `openai` (`/audio/transcriptions`); inferred from `baseUrl`/`command` otherwise |
+| `baseUrl` | `WABOX_PI_TRANSCRIBE_URL` | endpoint; defaults to OpenRouter chat when `provider: openrouter` |
+| `model` | `WABOX_PI_TRANSCRIBE_MODEL` | STT/audio model (`google/gemini-3.1-flash-lite`, `whisper-large-v3`, …) |
+| `apiKey` / `apiKeyEnv` / `apiKeyFile` | `WABOX_PI_TRANSCRIBE_KEY` | secret resolution, in that order; falls back to pi's stored credential for the provider |
+| `piProvider` | — | provider id to read from pi's `auth.json` (defaults to `openrouter`) |
+| `usePiAuth` | — | default `true`; set `false` to ignore pi's stored credential |
+| `language` | `WABOX_PI_TRANSCRIBE_LANG` | ISO code; empty ⇒ auto-detect |
+| `prompt` | — | optional hint passed to the audio model |
+| `timeoutMs` | — | default `120000` |
+| `command` | `WABOX_PI_TRANSCRIBE_CMD` | shell command; the audio path is appended (or `{file}` substituted); stdout is the transcript |
+
+OGG/Opus voice notes are sent as-is for `openrouter`; other containers are
+transcoded to mp3 with `ffmpeg` first.
+
+Only inbound `audio/*` media (voice notes) is transcribed. If transcription is
+disabled or fails, the prompt says so and the agent is told not to pretend it
+heard the audio. Transcription runs in the daemon process, so the bash sandbox's
+network setting does not affect it.
 
 ### Scheduled tasks
 

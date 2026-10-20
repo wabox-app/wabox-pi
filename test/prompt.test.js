@@ -59,6 +59,19 @@ test('renders a local attachment path and media-only message', () => {
   assert.match(prompt, /attachment only/);
 });
 
+test('renders an audio transcript and a transcription failure', () => {
+  const withTranscript = buildTurnPrompt([
+    { ...base, media: { type: 'audio', localPath: '/m/note.ogg', transcript: 'bom dia' } },
+  ]);
+  assert.match(withTranscript, /Attachment: audio/);
+  assert.match(withTranscript, /Transcript: bom dia/);
+
+  const failed = buildTurnPrompt([
+    { ...base, media: { type: 'audio', localPath: '/m/note.ogg', transcriptError: 'timeout' } },
+  ]);
+  assert.match(failed, /Transcription failed: timeout/);
+});
+
 test('batches several envelopes into one prompt', () => {
   const prompt = buildTurnPrompt([
     { ...base, id: 'A', text: 'first' },
