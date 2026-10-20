@@ -5,7 +5,18 @@ import { createLogger } from './logger.js';
 import { acquireLock } from './lock.js';
 import { startDaemon } from './daemon.js';
 import { nextCronDate } from './cron.js';
+import { normalizeTasks } from './schedule.js';
 import { APP, VERSION } from './version.js';
+
+async function dynamicTasks(config) {
+  try {
+    const value = JSON.parse(await fs.readFile(config.tasksFile, 'utf8'));
+    const list = Array.isArray(value) ? value : value?.tasks;
+    return normalizeTasks(Array.isArray(list) ? list : [], { timezone: config.timezone });
+  } catch {
+    return [];
+  }
+}
 
 function usage() {
   console.log(`${APP} ${VERSION} — connect WhatsApp conversations to pi
@@ -64,6 +75,7 @@ async function status(asJson) {
   const conversationsDir = config.conversationsDir;
   const conversations = await listDir(conversationsDir);
   const lock = await lockOwner(config.lockFile);
+  const allTasks = [...config.tasks, ...(await dynamicTasks(config))];
 
   const data = {
     version: VERSION,
@@ -78,11 +90,12 @@ async function status(asJson) {
       config: config.configFile,
     },
     conversations: [],
-    tasks: config.tasks.map((task) => ({
+    tasks: allTasks.map((task) => ({
       name: task.name,
       enabled: task.enabled,
       cron: task.cron,
       timezone: task.timezone,
+      source: task.source,
       target: task.slug || task.to || null,
       error: task.error || null,
       next:
@@ -135,14 +148,15 @@ async function status(asJson) {
   }
   console.log('');
   if (data.tasks.length) {
-    console.log('Scheduled tasks:');
+    console.log('Scheduled jobs:');
     for (const task of data.tasks) {
       const flags = [
         task.enabled ? 'on' : 'off',
+        task.source === 'chat' ? '(chat)' : '',
         `${task.cron}${task.timezone ? ` ${task.timezone}` : ''}`,
         task.error ? `ERROR: ${task.error}` : `next ${task.next ?? 'never'}`,
         task.target ?? '',
-      ];
+      ].filter(Boolean);
       console.log(`  ${task.name.padEnd(20)} ${flags.join('  ')}`);
     }
     console.log('');

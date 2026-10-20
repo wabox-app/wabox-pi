@@ -223,6 +223,8 @@ export function loadConfig({ cwd = process.cwd() } = {}) {
   config.failedDir = path.join(stateDir, 'failed');
   config.conversationsDir = path.join(stateDir, 'conversations');
   config.schedulerFile = path.join(stateDir, 'scheduler.json');
+  // Chat-created jobs (see src/tasks.js), separate from the config file.
+  config.tasksFile = path.join(stateDir, 'tasks.json');
 
   return config;
 }

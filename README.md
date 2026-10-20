@@ -170,7 +170,8 @@ Without `inboxDir`/`outboxDir`, `wabox-pi` asks `wabox status` (and
 ### Scheduled tasks
 
 `tasks` runs an agent turn on a cron schedule, with no incoming message, so the
-agent can send a proactive WhatsApp message (or do work and report back):
+agent can send a proactive WhatsApp message (or do work and report back). Jobs
+can also be added, listed, and removed from chat (see `/schedule`, `/jobs`):
 
 ```json
 {
@@ -203,6 +204,7 @@ agent can send a proactive WhatsApp message (or do work and report back):
 | `timezone` | IANA zone for this task; falls back to the global `timezone`, then the system zone |
 | `prompt` | instructions for the turn |
 | `enabled` | default `true` |
+| `silent` | default `false`; when true the task never auto-replies (it must use `wabox_send`), so an orchestrator can stay silent when there is nothing to do |
 
 The task turn is serialized with that chat's other turns and the agent replies
 through the normal `wabox_send` tool (no quoting, since there is no message to
@@ -228,9 +230,23 @@ Send these as normal WhatsApp messages:
 | --- | --- |
 | `/help` | command list |
 | `/status` | session id, model, workspace, turn count |
-| `/tasks` | scheduled tasks, next run, and which target each uses |
+| `/jobs` (or `/tasks`) | scheduled jobs, next run, and which target each uses |
+| `/schedule <cron> <prompt>` | add a job for this chat |
+| `/unschedule <name>` (or `/cancel`) | remove a job created from chat |
 | `/new` (or `/reset`, `/clear`) | drop the session history for this chat |
 | `/ping` | liveness check |
+
+`/schedule` takes the five cron fields, then the prompt:
+
+```
+/schedule 0 9 * * * Lembrar de tomar o remédio
+/schedule @daily Revisar a inbox
+```
+
+The job is stored in `stateDir/tasks.json` (separate from `config.json`) and is
+picked up by the scheduler immediately, without a restart. Jobs created from
+chat are marked `(chat)` in `/jobs` and can be removed with `/unschedule`; jobs
+from `config.json` are managed there.
 
 Unrecognised `/…` messages are passed to pi, so pi slash commands (for example
 `/compact`) still work.
@@ -277,6 +293,7 @@ the agent names; the file jail keeps those inside the workspace.
     processed/     claimed inbox envelopes (audit trail)
     identity.json  JID last seen, used to target scheduled messages
   failed/          invalid envelopes
+  tasks.json       jobs created from chat (/schedule)
   scheduler.json   last fire per scheduled task
   wabox-pi.log
 ```

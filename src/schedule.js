@@ -8,7 +8,7 @@
 
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { cronMatches, parseCron } from './cron.js';
+import { cronMatches, nextCronDate, parseCron } from './cron.js';
 
 const STATE_VERSION = 1;
 
@@ -58,6 +58,11 @@ export function normalizeTasks(rawTasks, { timezone } = {}) {
     return {
       name,
       enabled: raw?.enabled !== false,
+      // A silent task never auto-replies: it only sends through wabox_send, so
+      // an orchestrator can end a "nothing to do" turn without a message.
+      silent: raw?.silent === true,
+      // Where the task came from: config.json, or a chat-created job.
+      source: raw?.source === 'chat' ? 'chat' : 'config',
       cron,
       prompt,
       slug,
@@ -70,10 +75,31 @@ export function normalizeTasks(rawTasks, { timezone } = {}) {
   });
 }
 
+// Human-readable list used by the /jobs command and `status`. Pure, so it is
+// easy to test. Invalid tasks are shown, not hidden.
+export function formatJobs(tasks, { slug, now = new Date() } = {}) {
+  if (!tasks?.length) return 'No scheduled jobs.';
+  const lines = ['*Scheduled jobs*'];
+  tasks.forEach((task, index) => {
+    const target = task.slug || task.to || '?';
+    const here = slug && task.slug === slug ? ' (this chat)' : '';
+    const from = task.source === 'chat' ? ' (chat)' : '';
+    if (task.error) {
+      lines.push(`${index + 1}. ${task.name}${from} [${target}] — invalid: ${task.error}`);
+      return;
+    }
+    const next = task.enabled ? nextCronDate(task.parsed, now, task.timezone) : null;
+    lines.push(
+      `${index + 1}. ${task.name}${here}${from} — ${task.enabled ? 'on' : 'off'}, ${task.cron}` +
+        `${task.timezone ? ` ${task.timezone}` : ''}` +
+        `${next ? `, next ${next.toISOString()}` : ''} — ${target}`,
+    );
+  });
+  return lines.join('\n');
+}
+
 export class Scheduler {
-  constructor({ tasks, log, stateFile, onFire, tickMs = 20_000, now = () => new Date() }) {
-    this.tasks = tasks.filter((task) => !task.error);
-    this.invalid = tasks.filter((task) => task.error);
+  constructor({ tasks = [], log, stateFile, onFire, tickMs = 20_000, now = () => new Date() }) {
     this.log = log;
     this.stateFile = stateFile;
     this.onFire = onFire;
@@ -83,6 +109,19 @@ export class Scheduler {
     this.timer = null;
     this.running = false;
     this.stopped = false;
+    this.tasks = [];
+    this.invalid = [];
+    this.setTasks(tasks);
+  }
+
+  // Replace the task list at runtime (chat-created jobs, config reload). The
+  // last-run map is keyed by name, so unchanged tasks keep their slot guard.
+  setTasks(tasks) {
+    this.tasks = (tasks ?? []).filter((task) => !task.error);
+    this.invalid = (tasks ?? []).filter((task) => task.error);
+    for (const task of this.invalid) {
+      this.log?.warn(`[schedule] skipping task "${task.name}": ${task.error}`);
+    }
   }
 
   async loadState() {
@@ -113,9 +152,6 @@ export class Scheduler {
   }
 
   async start() {
-    for (const task of this.invalid) {
-      this.log.warn(`[schedule] skipping task "${task.name}": ${task.error}`);
-    }
     if (this.tasks.length) {
       const names = this.tasks.map((task) => `${task.name} [${task.cron}${task.timezone ? ` ${task.timezone}` : ''}]`);
       this.log.info(`[schedule] ${this.tasks.length} task(s): ${names.join(', ')}`);

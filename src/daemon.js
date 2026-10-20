@@ -12,18 +12,19 @@ import { readEnvelope } from './envelope.js';
 import { conversationKey, slugFor } from './routing.js';
 import { conversationConfig } from './config.js';
 import { ensureConversation, readIdentity, rememberIdentity, seedWorkspace } from './workspace.js';
-import { Scheduler } from './schedule.js';
+import { Scheduler, normalizeTasks } from './schedule.js';
+import { TaskStore, storedTask } from './tasks.js';
 import { writeJob, reactionJob } from './outbox.js';
 import { moveFile } from './fsutil.js';
 import { ConversationAgent } from './agent.js';
 
 class ConversationRunner {
-  constructor({ config, log, slug, paths }) {
+  constructor({ config, log, slug, paths, jobs }) {
     this.config = config;
     this.log = log;
     this.slug = slug;
     this.paths = paths;
-    this.agent = new ConversationAgent({ config, log, slug, paths });
+    this.agent = new ConversationAgent({ config, log, slug, paths, jobs });
     this.queue = [];
     this.busy = false;
     this.timer = null;
@@ -177,12 +178,39 @@ export async function startDaemon(config, log) {
     fs.mkdir(config.failedDir, { recursive: true }),
   ]);
 
+  // Chat-created jobs live in tasks.json; the scheduler runs config tasks plus
+  // these. Adding or removing a job re-seeds the scheduler immediately.
+  const taskStore = new TaskStore({
+    file: config.tasksFile,
+    log,
+    timezone: config.timezone,
+  });
+  await taskStore.load();
+  const mergedTasks = () => [...config.tasks, ...taskStore.normalized()];
+
   const runners = new Map();
+  let scheduler = null;
+
+  const jobs = {
+    list: async () => mergedTasks(),
+    add: async (raw) => {
+      const [normalized] = normalizeTasks([raw], { timezone: config.timezone });
+      if (normalized.error) throw new Error(normalized.error);
+      await taskStore.add(storedTask(normalized));
+      scheduler?.setTasks(mergedTasks());
+      return normalized;
+    },
+    remove: async (name) => {
+      const removed = await taskStore.remove(name);
+      if (removed) scheduler?.setTasks(mergedTasks());
+      return removed;
+    },
+  };
 
   const runnerFor = (slug, paths, convConfig) => {
     let runner = runners.get(slug);
     if (!runner) {
-      runner = new ConversationRunner({ config: convConfig, log, slug, paths });
+      runner = new ConversationRunner({ config: convConfig, log, slug, paths, jobs });
       runners.set(slug, runner);
     }
     return runner;
@@ -191,18 +219,16 @@ export async function startDaemon(config, log) {
   // Reach a conversation without an inbound message: resolve its identity
   // (the JID we last replied on) and enqueue a proactive turn on its runner.
   const fireTask = async (task) => {
-    let slug = task.slug;
-    let identity = null;
-    if (task.to) {
-      identity = { from: task.to, participant: task.participant ?? null };
-      slug = slugFor(
-        conversationKey(identity, { groupPerParticipant: config.groupPerParticipant }),
-      );
-    }
+    // A chat job carries both: `slug` names the session, `to` is the send
+    // target. A config job usually carries only one of them.
+    const target = { from: task.to, participant: task.participant ?? null };
+    const slug =
+      task.slug ??
+      slugFor(conversationKey(target, { groupPerParticipant: config.groupPerParticipant }));
 
     const convConfig = conversationConfig(config, slug);
     const paths = await ensureConversation(convConfig, slug);
-    if (!identity) identity = await readIdentity(paths);
+    const identity = task.to ? target : await readIdentity(paths);
     if (!identity?.from) {
       log.warn(`[schedule] "${task.name}": no identity recorded for ${slug} yet; skipping`);
       return;
@@ -211,8 +237,8 @@ export async function startDaemon(config, log) {
     runnerFor(slug, paths, convConfig).enqueueTask({ task, identity });
   };
 
-  const scheduler = new Scheduler({
-    tasks: config.tasks,
+  scheduler = new Scheduler({
+    tasks: mergedTasks(),
     log,
     stateFile: config.schedulerFile,
     tickMs: config.schedulerTickMs,

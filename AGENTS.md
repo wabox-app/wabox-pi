@@ -23,7 +23,7 @@ the pi SDK, `chokidar`, and `typebox`.
 | `src/wabox-paths.js` | Asks `wabox status` for the inbox/outbox (fallback: XDG). |
 | `src/daemon.js` | Inbox watcher, envelope claiming, per-chat queue runners, task firing. |
 | `src/agent.js` | One `ConversationAgent` per chat: session lifecycle, turns. |
-| `src/commands.js` | Local `/help`, `/status`, `/tasks`, `/new`, `/ping` dispatch. |
+| `src/commands.js` | Local `/help`, `/status`, `/jobs`, `/schedule`, `/new`, `/ping` dispatch. |
 | `src/tools.js` | The `wabox_send` tool (text/files/reaction → outbox job). |
 | `src/outbox.js` | Atomic job writer + reply/reaction job builders. |
 | `src/prompt.js` | Inbox envelope → per-turn prompt (pure). |
@@ -32,6 +32,7 @@ the pi SDK, `chokidar`, and `typebox`.
 | `src/jail.js` | Path-jail file tools; bubblewrap-sandbox `bash`. |
 | `src/cron.js` | Time-zone-aware 5-field cron parsing + next-run search (pure). |
 | `src/schedule.js` | Scheduled-task normalization, due check, last-run persistence. |
+| `src/tasks.js` | Chat-created jobs (`stateDir/tasks.json`) + task-name derivation. |
 | `src/routing.js` | Conversation key + filesystem-safe slug. |
 | `src/envelope.js` | Envelope parsing/validation and reply targeting. |
 | `src/fsutil.js` | Cross-filesystem move (inbox and state may be different mounts). |
@@ -73,6 +74,12 @@ the pi SDK, `chokidar`, and `typebox`.
   `wabox_send`. Tasks are marked `turn.proactive` so nothing quotes or reacts to
   a synthetic message id. `lastRun` is persisted in `scheduler.json`; missed
   runs are not replayed.
+- **Jobs from chat are runtime state, not config.** `/schedule` writes
+  `stateDir/tasks.json` via `TaskStore` and calls `scheduler.setTasks()` so the
+  job runs without a restart. Config tasks stay in `config.json`; the merged
+  list is `config.tasks` + `TaskStore.normalized()`. A task with `silent: true`
+  never auto-replies (only `wabox_send` sends), which is what lets the Valter
+  heartbeat end a no-op turn without a message.
 
 ## Gotchas
 

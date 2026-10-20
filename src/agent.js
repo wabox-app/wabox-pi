@@ -17,16 +17,19 @@ import { buildTaskPrompt, buildTurnPrompt } from './prompt.js';
 import { systemPromptAppend } from './instructions.js';
 import { createSendTool } from './tools.js';
 import { proactiveJob, replyJob, writeJob } from './outbox.js';
-import { HELP, parseLocalCommand } from './commands.js';
+import { HELP, parseLocalCommand, parseScheduleCommand } from './commands.js';
 import { nextCronDate } from './cron.js';
+import { formatJobs } from './schedule.js';
+import { jobName, storedTask } from './tasks.js';
 import { resolveBashTool, workspaceJailExtension } from './jail.js';
 
 export class ConversationAgent {
-  constructor({ config, log, slug, paths }) {
+  constructor({ config, log, slug, paths, jobs }) {
     this.config = config;
     this.log = log;
     this.slug = slug;
     this.paths = paths;
+    this.jobs = jobs ?? null;
     this.session = null;
     this.modelFallbackMessage = null;
     this.lastUsed = Date.now();
@@ -223,7 +226,8 @@ export class ConversationAgent {
       const session = await this.ensureSession();
       await session.prompt(buildTaskPrompt(task));
       const text = session.getLastAssistantText()?.trim() || '';
-      if (!this.turn.sentContent && this.config.autoReply && text) {
+      // A silent task only sends what it explicitly passes to wabox_send.
+      if (!this.turn.sentContent && !task.silent && this.config.autoReply && text) {
         await writeJob(this.config.outboxDir, proactiveJob(this.turn.envelope, { text }));
       }
       this.log.info(
@@ -233,7 +237,8 @@ export class ConversationAgent {
     } catch (err) {
       this.log.error(`[${this.slug}] task "${task.name}" failed: ${err?.message || err}`);
       this.disposeSession();
-      await this.reportError(this.turn.envelope, err, { proactive: true });
+      // A silent task must not spam the chat on failure; the log has it.
+      if (!task.silent) await this.reportError(this.turn.envelope, err, { proactive: true });
       throw err;
     } finally {
       this.turn.envelope = null;
@@ -254,7 +259,15 @@ export class ConversationAgent {
         reply = await this.statusText();
         break;
       case 'tasks':
-        reply = this.tasksText();
+      case 'jobs':
+        reply = await this.jobsText();
+        break;
+      case 'schedule':
+        reply = await this.scheduleJob(command.args, envelope);
+        break;
+      case 'unschedule':
+      case 'cancel':
+        reply = await this.unscheduleJob(command.args);
         break;
       case 'new':
       case 'reset':
@@ -285,27 +298,55 @@ export class ConversationAgent {
     return lines.join('\n');
   }
 
-  tasksText() {
-    const tasks = this.config.tasks ?? [];
-    if (!tasks.length) return 'No scheduled tasks configured.';
-    const now = new Date();
-    const lines = ['*Scheduled tasks*'];
-    for (const task of tasks) {
-      const target = task.slug || task.to || '?';
-      const here = task.slug === this.slug ? ' (this chat)' : '';
-      if (task.error) {
-        lines.push(`• ${task.name} [${target}] — invalid: ${task.error}`);
-        continue;
-      }
-      const next = task.enabled ? nextCronDate(task.parsed, now, task.timezone) : null;
-      lines.push(
-        `• ${task.name}${here} — ${task.enabled ? 'on' : 'off'}, ${task.cron}` +
-          `${task.timezone ? ` ${task.timezone}` : ''}` +
-          `${next ? `, next ${next.toISOString()}` : ''}` +
-          ` — ${target}`,
-      );
+  async jobsText() {
+    if (!this.jobs) return 'Job management is not available.';
+    return formatJobs(await this.jobs.list(), { slug: this.slug });
+  }
+
+  async scheduleJob(args, envelope) {
+    if (!this.jobs) return 'Job management is not available.';
+    const parsed = parseScheduleCommand(args);
+    if (parsed.error) return parsed.error;
+
+    const existing = new Set((await this.jobs.list()).map((task) => task.name));
+    const raw = storedTask({
+      name: jobName(parsed.prompt, existing),
+      slug: this.slug,
+      to: envelope.from,
+      participant: envelope.participant ?? null,
+      cron: parsed.cron,
+      timezone: this.config.timezone,
+      prompt: parsed.prompt,
+      enabled: true,
+    });
+
+    let created;
+    try {
+      created = await this.jobs.add(raw);
+    } catch (err) {
+      return `Could not schedule: ${err.message}`;
     }
-    return lines.join('\n');
+    const next = created.parsed ? nextCronDate(created.parsed, new Date(), created.timezone) : null;
+    return (
+      `Job *${created.name}* scheduled: ${created.cron}` +
+      `${created.timezone ? ` (${created.timezone})` : ''}` +
+      `${next ? `\nNext: ${next.toISOString()}` : ''}\n` +
+      `Remove with /unschedule ${created.name}`
+    );
+  }
+
+  async unscheduleJob(args) {
+    if (!this.jobs) return 'Job management is not available.';
+    const name = (args || '').trim().split(/\s+/)[0];
+    if (!name) return 'Usage: /unschedule <name> (see /jobs)';
+    let removed;
+    try {
+      removed = await this.jobs.remove(name);
+    } catch (err) {
+      return `Could not remove: ${err.message}`;
+    }
+    if (removed) return `Job "${name}" removed.`;
+    return `No chat-scheduled job named "${name}". Config jobs must be removed from config.json.`;
   }
 
   status() {
