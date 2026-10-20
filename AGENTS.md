@@ -19,7 +19,7 @@ the pi SDK, `chokidar`, and `typebox`.
 | --- | --- |
 | `bin/wabox-pi.js` | Entrypoint; delegates to `src/cli.js`. |
 | `src/cli.js` | `run` / `status` / `version` / `help`. |
-| `src/config.js` | env > `config.json` > defaults; resolves state paths. |
+| `src/config.js` | env > `config.json` > defaults; per-slug overrides; state paths. |
 | `src/wabox-paths.js` | Asks `wabox status` for the inbox/outbox (fallback: XDG). |
 | `src/daemon.js` | Inbox watcher, envelope claiming, per-chat queue runners. |
 | `src/agent.js` | One `ConversationAgent` per chat: session lifecycle, turns. |
@@ -61,6 +61,10 @@ the pi SDK, `chokidar`, and `typebox`.
   that resolve outside the workspace (plus the conversation's `media/`) via a
   pi `tool_call` handler, and wraps `bash` in bubblewrap. `workspaceOverrides`
   redirects `cwd`; it must not defeat the jail's read roots.
+- **Instance config, per-slug overrides.** `conversationConfig(config, slug)`
+  in `src/config.js` merges `config.json`'s `conversations.<slug>` over the
+  instance config (workspace, tools, jail/sandbox, …). The daemon resolves it
+  once per claim and hands the merged config to paths and the agent.
 
 ## Gotchas
 

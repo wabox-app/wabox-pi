@@ -10,6 +10,7 @@ import path from 'node:path';
 import chokidar from 'chokidar';
 import { readEnvelope } from './envelope.js';
 import { conversationKey, slugFor } from './routing.js';
+import { conversationConfig } from './config.js';
 import { ensureConversation, seedWorkspace } from './workspace.js';
 import { writeJob, reactionJob } from './outbox.js';
 import { moveFile } from './fsutil.js';
@@ -113,7 +114,10 @@ async function claimEnvelope(file, config, log) {
 
   const key = conversationKey(envelope, { groupPerParticipant: config.groupPerParticipant });
   const slug = slugFor(key);
-  const paths = await ensureConversation(config, slug);
+  // Per-conversation overrides (workspace, tools, jail/sandbox, …) apply from
+  // here on, so paths and the agent see the merged settings.
+  const convConfig = conversationConfig(config, slug);
+  const paths = await ensureConversation(convConfig, slug);
 
   const stem = path.basename(file, '.json');
   const processed = path.join(paths.processed, `${stem}.json`);
@@ -138,8 +142,8 @@ async function claimEnvelope(file, config, log) {
     }
   }
 
-  await seedWorkspace(config, paths, log);
-  return { envelope, slug, paths };
+  await seedWorkspace(convConfig, paths, log);
+  return { envelope, slug, paths, config: convConfig };
 }
 
 export async function startDaemon(config, log) {
@@ -153,10 +157,10 @@ export async function startDaemon(config, log) {
 
   const runners = new Map();
 
-  const runnerFor = (slug, paths) => {
+  const runnerFor = (slug, paths, convConfig) => {
     let runner = runners.get(slug);
     if (!runner) {
-      runner = new ConversationRunner({ config, log, slug, paths });
+      runner = new ConversationRunner({ config: convConfig, log, slug, paths });
       runners.set(slug, runner);
     }
     return runner;
@@ -174,22 +178,22 @@ export async function startDaemon(config, log) {
     try {
       const claimed = await claimEnvelope(file, config, log);
       if (!claimed || stopping) return;
-      const { envelope, slug, paths } = claimed;
+      const { envelope, slug, paths, config: convConfig } = claimed;
 
       log.info(
         `[${slug}] claimed ${envelope.id} from ${envelope.pushName || envelope.number || envelope.from}` +
           `${envelope.media ? ` (${envelope.media.type})` : ''}`,
       );
 
-      if (config.ackReact) {
+      if (convConfig.ackReact) {
         try {
-          await writeJob(config.outboxDir, reactionJob(envelope, config.ackReact));
+          await writeJob(config.outboxDir, reactionJob(envelope, convConfig.ackReact));
         } catch (err) {
           log.warn(`[${slug}] ack reaction failed: ${err.message}`);
         }
       }
 
-      runnerFor(slug, paths).enqueue(envelope);
+      runnerFor(slug, paths, convConfig).enqueue(envelope);
     } catch (err) {
       log.error(`failed to handle ${file}: ${err?.stack || err}`);
     }

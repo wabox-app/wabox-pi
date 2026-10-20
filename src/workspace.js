@@ -14,7 +14,12 @@ import path from 'node:path';
 
 export function conversationPaths(config, slug) {
   const root = path.join(config.conversationsDir, slug);
-  const override = config.workspaceOverrides?.[slug];
+  // Accepts either a merged per-conversation config (see conversationConfig)
+  // or the raw instance config, where the override is nested under the slug.
+  const override =
+    config.workspace ??
+    config.conversations?.[slug]?.workspace ??
+    config.workspaceOverrides?.[slug];
   return {
     root,
     workspace: override ? path.resolve(override) : path.join(root, 'workspace'),

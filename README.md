@@ -78,7 +78,14 @@ lives at `${XDG_CONFIG_HOME:-~/.config}/wabox-pi/config.json`:
   "sandboxNetwork": true,
   "sandboxDenyRead": ["~/.ssh", "~/.aws", "~/.gnupg", "~/.pi"],
   "workspaceOverrides": {
-    "meu-jid@s.whatsapp.net": "/home/rod/projetos/whatsapp-agent"
+    "277880256909343-2a21b939c8": "/home/rod/Valter"
+  },
+  "conversations": {
+    "5511999998888-ab12cd34ef": {
+      "workspace": "./projetos/assistente",
+      "tools": ["read", "edit", "write"],
+      "sandboxBash": "bwrap"
+    }
   }
 }
 ```
@@ -100,8 +107,44 @@ lives at `${XDG_CONFIG_HOME:-~/.config}/wabox-pi/config.json`:
 | `sandboxNetwork` | `WABOX_PI_SANDBOX_NET` | `true` | keep network access inside the bash sandbox |
 | `sandboxDenyRead` | `WABOX_PI_SANDBOX_DENY_READ` | sensible secrets list | dirs hidden from sandboxed bash |
 | `sandboxBashBin` | `WABOX_PI_SANDBOX_BASH_BIN` | `bwrap` | bubblewrap binary |
-| `workspaceOverrides` | — | `{}` | map conversation slug → custom workspace directory |
+| `conversations` | — | `{}` | per-slug overrides (see below) |
+| `workspaceOverrides` | — | `{}` | older shortcut for `conversations.<slug>.workspace` |
 | `logLevel` | `WABOX_PI_LOG_LEVEL` | `info` | `debug`, `info`, `warn`, `error` |
+
+#### Per-conversation overrides
+
+The instance-wide settings above are defaults. `conversations` overrides them for
+a single chat, keyed by the conversation slug (the folder name under
+`conversations/`, shown by `/status`):
+
+```json
+{
+  "jail": true,
+  "sandboxBash": "auto",
+  "conversations": {
+    "5511999998888-ab12cd34ef": {
+      "workspace": "./projetos/assistente",
+      "jail": false,
+      "sandboxBash": "off",
+      "sandboxNetwork": false,
+      "sandboxDenyRead": ["~/secrets"],
+      "tools": ["read", "edit", "write"],
+      "excludeTools": ["bash"],
+      "autoReply": false,
+      "ackReact": "👍",
+      "batchWindowMs": 500
+    }
+  }
+}
+```
+
+Overridable keys: `workspace`, `jail`, `sandboxBash`, `sandboxNetwork`,
+`sandboxDenyRead`, `sandboxBashBin`, `tools`, `excludeTools`, `autoReply`,
+`errorReply`, `ackReact`, `batchWindowMs`, `workspaceTemplate`. Values replace
+the instance value (lists are not merged); relative paths resolve against the
+config file. A per-slug value wins over the environment variable for that
+conversation. `groupPerParticipant` is instance-wide because it changes the slug
+itself.
 
 `workspaceOverrides` lets you point specific conversations at existing project
 folders. Sessions, media, and processed envelopes still live under `stateDir`;

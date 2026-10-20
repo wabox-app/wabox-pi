@@ -47,6 +47,66 @@ function list(value, fallback) {
   return fallback;
 }
 
+// Keys a per-conversation override may set. Values replace the instance value
+// (lists are not merged). Path-valued keys are resolved against the config file.
+const CONVERSATION_KEYS = [
+  'workspace',
+  'jail',
+  'sandboxBash',
+  'sandboxNetwork',
+  'sandboxDenyRead',
+  'sandboxBashBin',
+  'tools',
+  'excludeTools',
+  'autoReply',
+  'errorReply',
+  'ackReact',
+  'batchWindowMs',
+  'workspaceTemplate',
+];
+
+function normalizeConversation(override, base) {
+  const out = {};
+  if (!override || typeof override !== 'object') return out;
+  if (override.workspace !== undefined) out.workspace = resolveFrom(base, override.workspace);
+  if (override.workspaceTemplate !== undefined) {
+    out.workspaceTemplate = resolveFrom(base, override.workspaceTemplate);
+  }
+  if (override.jail !== undefined) out.jail = bool(override.jail, true);
+  if (override.sandboxBash !== undefined) out.sandboxBash = String(override.sandboxBash);
+  if (override.sandboxNetwork !== undefined) out.sandboxNetwork = bool(override.sandboxNetwork, true);
+  if (override.sandboxBashBin !== undefined) out.sandboxBashBin = String(override.sandboxBashBin);
+  if (override.sandboxDenyRead !== undefined) {
+    out.sandboxDenyRead = list(override.sandboxDenyRead, DEFAULT_SANDBOX_DENY_READ);
+  }
+  if (override.tools !== undefined) out.tools = list(override.tools, DEFAULT_TOOLS);
+  if (override.excludeTools !== undefined) out.excludeTools = list(override.excludeTools, []);
+  if (override.autoReply !== undefined) out.autoReply = bool(override.autoReply, true);
+  if (override.errorReply !== undefined) out.errorReply = bool(override.errorReply, true);
+  if (override.ackReact !== undefined) out.ackReact = String(override.ackReact ?? '');
+  if (override.batchWindowMs !== undefined) out.batchWindowMs = int(override.batchWindowMs, 0);
+  return out;
+}
+
+// Merge a conversation's overrides over the instance config. Returns the same
+// object when nothing is overridden, so the common path stays allocation-free.
+// `workspaceOverrides` is the older, workspace-only form and still wins when a
+// `conversations` entry does not set `workspace`.
+export function conversationConfig(config, slug) {
+  const override = config.conversations?.[slug];
+  const workspace = override?.workspace ?? config.workspaceOverrides?.[slug];
+  if (!override && !workspace) return config;
+
+  const merged = { ...config };
+  if (override) {
+    for (const key of CONVERSATION_KEYS) {
+      if (override[key] !== undefined) merged[key] = override[key];
+    }
+  }
+  if (workspace) merged.workspace = workspace;
+  return merged;
+}
+
 function readJson(file) {
   try {
     return JSON.parse(fs.readFileSync(file, 'utf8'));
@@ -116,8 +176,21 @@ export function loadConfig({ cwd = process.cwd() } = {}) {
       DEFAULT_SANDBOX_DENY_READ,
     ),
 
-    // Map conversation slugs to custom workspace directories (absolute or relative to config file).
-    workspaceOverrides: file?.workspaceOverrides ?? {},
+    // Per-conversation overrides (workspace, tools, jail/sandbox, …). Relative
+    // paths resolve against the config file; see `conversationConfig`.
+    conversations: Object.fromEntries(
+      Object.entries(file?.conversations ?? {}).map(([slug, override]) => [
+        slug,
+        normalizeConversation(override, base),
+      ]),
+    ),
+
+    // Older, workspace-only form of the same idea. Prefer `conversations`.
+    workspaceOverrides: Object.fromEntries(
+      Object.entries(file?.workspaceOverrides ?? {})
+        .map(([slug, dir]) => [slug, resolveFrom(base, dir)])
+        .filter(([, dir]) => dir),
+    ),
 
     // Seeded into a fresh conversation workspace as AGENTS.md. A relative
     // value resolves against the config file; the built-in default is absolute.
