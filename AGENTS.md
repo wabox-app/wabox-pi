@@ -54,6 +54,11 @@ the pi SDK, `chokidar`, and `typebox`.
 - **Turns are serialized per conversation.** pi sessions cannot run two turns at
   once, and out-of-order replies are confusing. Different conversations run
   concurrently.
+- **A long turn must not look like a dead chat.** `startTurnFeedback` reacts
+  after `turnFeedbackMs`; `startTurnTimeout` aborts after `turnTimeoutMs` and
+  the agent replies instead of leaving the queue blocked. `maybeCompact`
+  compacts before pi's own threshold, because a big context makes every
+  request slow.
 - **Tools are the protocol.** `wabox_send` writes jobs during the turn. If the
   agent sends text/files through it, the final assistant text is *not* sent
   again. If it sends nothing, `autoReply` sends the final text (a safety net).

@@ -134,6 +134,11 @@ lives at `${XDG_CONFIG_HOME:-~/.config}/wabox-pi/config.json`:
 | `tasks` | — | `[]` | scheduled tasks (see below) |
 | `timezone` | `WABOX_PI_TIMEZONE` | system | default IANA time zone for `tasks` cron |
 | `schedulerTickMs` | `WABOX_PI_SCHEDULER_TICK_MS` | `20000` | how often the scheduler checks for due tasks |
+| `turnFeedbackMs` | `WABOX_PI_TURN_FEEDBACK_MS` | `60000` | react to the message when a turn takes this long (`0` = off) |
+| `turnFeedbackReact` | `WABOX_PI_TURN_FEEDBACK_REACT` | `⏳` | emoji for the "still working" reaction |
+| `turnTimeoutMs` | `WABOX_PI_TURN_TIMEOUT_MS` | `600000` | abort a turn that runs longer than this (`0` = off) |
+| `contextCompactRatio` | `WABOX_PI_CONTEXT_COMPACT_RATIO` | `0.5` | compact the session past this share of the model's window |
+| `contextCompactWarnTokens` | `WABOX_PI_CONTEXT_WARN_TOKENS` | `120000` | warn in the log past this many context tokens |
 | `logLevel` | `WABOX_PI_LOG_LEVEL` | `info` | `debug`, `info`, `warn`, `error` |
 
 #### Per-conversation overrides
@@ -336,6 +341,24 @@ Behavior notes:
 - A task missed while the daemon was down is **not** replayed.
 - Invalid tasks (bad cron, unknown timezone, missing target) are reported at
   startup and by `/tasks`; they never crash the daemon.
+
+#### Long turns and big contexts
+
+A turn can take minutes when the model has a lot of context to chew on. Two
+guards keep the chat informed and the queue moving:
+
+- `turnFeedbackMs` (default 60 s) reacts to the inbound message with
+  `turnFeedbackReact` (⏳) when the turn is still running, so it is obvious the
+  agent is alive.
+- `turnTimeoutMs` (default 10 min) aborts the turn and replies
+  "⏱️ Isso demorou demais e eu interrompi. Manda de novo que eu continuo daqui."
+  instead of leaving the conversation queue blocked.
+
+Context grows over a long-lived chat, and every request re-sends it, so turns
+get slower and slower. pi only compacts near the model's window limit, which is
+too late: wabox-pi compacts at `contextCompactRatio` (default 50 %) of the
+model's window and warns in the log past `contextCompactWarnTokens`. `/new`
+starts a fresh session if you want to drop the history on purpose.
 
 ### Chat commands
 

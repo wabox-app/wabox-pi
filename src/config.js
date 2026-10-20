@@ -55,6 +55,11 @@ const CONVERSATION_KEYS = [
   'modelProvider',
   'model',
   'thinkingLevel',
+  'turnFeedbackMs',
+  'turnFeedbackReact',
+  'turnTimeoutMs',
+  'contextCompactRatio',
+  'contextCompactWarnTokens',
   'jail',
   'sandboxBash',
   'sandboxNetwork',
@@ -80,6 +85,13 @@ function normalizeConversation(override, base) {
   if (override.modelProvider !== undefined) out.modelProvider = String(override.modelProvider);
   if (override.model !== undefined) out.model = String(override.model);
   if (override.thinkingLevel !== undefined) out.thinkingLevel = String(override.thinkingLevel);
+  if (override.turnFeedbackMs !== undefined) out.turnFeedbackMs = int(override.turnFeedbackMs, 60_000, { min: 0 });
+  if (override.turnFeedbackReact !== undefined) out.turnFeedbackReact = String(override.turnFeedbackReact);
+  if (override.turnTimeoutMs !== undefined) out.turnTimeoutMs = int(override.turnTimeoutMs, 600_000, { min: 0 });
+  if (override.contextCompactRatio !== undefined) out.contextCompactRatio = Number(override.contextCompactRatio);
+  if (override.contextCompactWarnTokens !== undefined) {
+    out.contextCompactWarnTokens = int(override.contextCompactWarnTokens, 120_000, { min: 0 });
+  }
   if (override.jail !== undefined) out.jail = bool(override.jail, true);
   if (override.sandboxBash !== undefined) out.sandboxBash = String(override.sandboxBash);
   if (override.sandboxNetwork !== undefined) out.sandboxNetwork = bool(override.sandboxNetwork, true);
@@ -230,6 +242,29 @@ export function loadConfig({ cwd = process.cwd() } = {}) {
     modelProvider: env('WABOX_PI_MODEL_PROVIDER') || file?.modelProvider || null,
     model: env('WABOX_PI_MODEL') || file?.model || null,
     thinkingLevel: env('WABOX_PI_THINKING_LEVEL') || file?.thinkingLevel || null,
+
+    // Long turns: react after this long so the chat is not left in the dark.
+    // 0 disables. `turnFeedbackReact` is the emoji used.
+    turnFeedbackMs: int(env('WABOX_PI_TURN_FEEDBACK_MS') ?? file?.turnFeedbackMs, 60_000, {
+      min: 0,
+    }),
+    turnFeedbackReact: env('WABOX_PI_TURN_FEEDBACK_REACT') || file?.turnFeedbackReact || '⏳',
+
+    // Abort a turn that runs longer than this and tell the chat. 0 disables.
+    turnTimeoutMs: int(env('WABOX_PI_TURN_TIMEOUT_MS') ?? file?.turnTimeoutMs, 600_000, {
+      min: 0,
+    }),
+
+    // Compact the session when its context passes this share of the model's
+    // window. pi only compacts near the window limit, which is too late for
+    // long-lived chats: every request then re-sends a huge context.
+    contextCompactRatio: Number(
+      env('WABOX_PI_CONTEXT_COMPACT_RATIO') ?? file?.contextCompactRatio ?? 0.5,
+    ),
+    contextCompactWarnTokens: int(
+      env('WABOX_PI_CONTEXT_WARN_TOKENS') ?? file?.contextCompactWarnTokens ?? 120_000,
+      { min: 0 },
+    ),
 
     transcription,
     web,

@@ -10,6 +10,7 @@ import path from 'node:path';
 import {
   createAgentSession,
   DefaultResourceLoader,
+  estimateTokens,
   getAgentDir,
   ModelRuntime,
   resolveCliModel,
@@ -18,7 +19,7 @@ import {
 import { buildTaskPrompt, buildTurnPrompt } from './prompt.js';
 import { systemPromptAppend } from './instructions.js';
 import { createSendTool } from './tools.js';
-import { proactiveJob, replyJob, writeJob } from './outbox.js';
+import { proactiveJob, reactionJob, replyJob, writeJob } from './outbox.js';
 import { HELP, parseLocalCommand, parseScheduleCommand } from './commands.js';
 import { nextCronDate } from './cron.js';
 import { formatJobs } from './schedule.js';
@@ -37,6 +38,8 @@ export class ConversationAgent {
     this.session = null;
     this.modelRuntime = null;
     this.modelFallbackMessage = null;
+    this.lastCompactWarn = 0;
+    this.turnTimedOut = false;
     this.lastUsed = Date.now();
     this.turns = 0;
     this.turn = {
@@ -144,6 +147,77 @@ export class ConversationAgent {
     return session;
   }
 
+  // Estimated context size of the session, in tokens.
+  contextTokens(session) {
+    const messages = session?.messages ?? [];
+    return messages.reduce((total, message) => total + estimateTokens(message), 0);
+  }
+
+  // pi only compacts when the context approaches the model's window, which is
+  // far too late for a long-lived chat: every request re-sends the whole
+  // history, so turns get slower and slower. Compact at a share of the window.
+  async maybeCompact(session) {
+    const ratio = this.config.contextCompactRatio;
+    const window = session?.model?.contextWindow ?? 0;
+    const tokens = this.contextTokens(session);
+
+    if (tokens >= (this.config.contextCompactWarnTokens ?? 0)) {
+      this.log.warn(
+        `[${this.slug}] context is ~${Math.round(tokens / 1000)}k tokens` +
+          `${this.lastCompactWarn === tokens ? '' : ' (/new clears it)'}`,
+      );
+      this.lastCompactWarn = tokens;
+    }
+
+    if (!ratio || !window) return;
+    if (tokens < window * ratio) return;
+
+    this.log.info(`[${this.slug}] compacting context (~${Math.round(tokens / 1000)}k tokens)`);
+    try {
+      await session.compact();
+      this.log.info(`[${this.slug}] compacted, context now ~${Math.round(this.contextTokens(session) / 1000)}k tokens`);
+    } catch (err) {
+      this.log.warn(`[${this.slug}] compaction failed: ${err?.message || err}`);
+    }
+  }
+
+  // React to the inbound message when a turn takes long, so the chat is not
+  // left wondering whether the agent is alive.
+  startTurnFeedback(envelope) {
+    const delay = this.config.turnFeedbackMs ?? 0;
+    if (!delay) return { clear() {} };
+    const timer = setTimeout(() => {
+      const emoji = this.config.turnFeedbackReact || '⏳';
+      writeJob(this.config.outboxDir, reactionJob(envelope, emoji)).catch((err) => {
+        this.log.warn(`[${this.slug}] turn feedback reaction failed: ${err.message}`);
+      });
+    }, delay);
+    timer.unref?.();
+    return {
+      clear() {
+        clearTimeout(timer);
+      },
+    };
+  }
+
+  // Abort a turn that runs too long, so the conversation queue is not blocked
+  // forever and the user gets an answer.
+  startTurnTimeout(session, envelope) {
+    const limit = this.config.turnTimeoutMs ?? 0;
+    if (!limit) return { clear() {} };
+    const timer = setTimeout(() => {
+      this.log.warn(`[${this.slug}] turn exceeded ${limit}ms, aborting`);
+      this.turnTimedOut = true;
+      session.abort().catch(() => {});
+    }, limit);
+    timer.unref?.();
+    return {
+      clear() {
+        clearTimeout(timer);
+      },
+    };
+  }
+
   // Resolve the per-conversation model override (config.modelProvider/model)
   // against pi's model catalog. Returns null to keep pi's default selection.
   async desiredModel() {
@@ -187,6 +261,7 @@ export class ConversationAgent {
     this.turn.sentAny = false;
     this.turn.sent = [];
     this.turn.proactive = false;
+    this.turnTimedOut = false;
 
     try {
       let expandPromptTemplates = false;
@@ -198,8 +273,12 @@ export class ConversationAgent {
       await this.transcribeBatch(envelopes);
 
       const session = await this.ensureSession();
+      await this.maybeCompact(session);
       const prompt = buildTurnPrompt(envelopes);
       const started = Date.now();
+
+      const feedback = this.startTurnFeedback(current);
+      const timeout = this.startTurnTimeout(session, current);
 
       try {
         await session.prompt(prompt, { expandPromptTemplates });
@@ -209,10 +288,23 @@ export class ConversationAgent {
         this.disposeSession();
         await this.reportError(current, err);
         throw err;
+      } finally {
+        feedback.clear();
+        timeout.clear();
       }
 
       const text = session.getLastAssistantText()?.trim() || '';
-      if (!this.turn.sentContent && this.config.autoReply && text) {
+      if (this.turnTimedOut) {
+        // The turn was cut short: say so instead of sending a half answer.
+        if (!this.turn.sentContent) {
+          await writeJob(
+            this.config.outboxDir,
+            replyJob(current, {
+              text: '⏱️ Isso demorou demais e eu interrompi. Manda de novo que eu continuo daqui.',
+            }),
+          );
+        }
+      } else if (!this.turn.sentContent && this.config.autoReply && text) {
         await writeJob(this.config.outboxDir, replyJob(current, { text }));
       }
 
@@ -374,6 +466,10 @@ export class ConversationAgent {
     }
     if (this.config.modelProvider || this.config.model) {
       lines.push(`model override: ${this.config.modelProvider ?? '?'}/${this.config.model ?? '?'}`);
+    }
+    if (this.session) {
+      const tokens = this.contextTokens(this.session);
+      lines.push(`context: ~${Math.round(tokens / 1000)}k tokens`);
     }
     if (this.config.thinkingLevel) lines.push(`thinking: ${this.config.thinkingLevel}`);
     if (this.modelFallbackMessage) lines.push(`note: ${this.modelFallbackMessage}`);
