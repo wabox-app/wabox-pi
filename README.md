@@ -137,6 +137,7 @@ lives at `${XDG_CONFIG_HOME:-~/.config}/wabox-pi/config.json`:
 | `turnFeedbackMs` | `WABOX_PI_TURN_FEEDBACK_MS` | `60000` | react to the message when a turn takes this long (`0` = off) |
 | `ignoreEmojiOnly` | `WABOX_PI_IGNORE_EMOJI_ONLY` | `true` | drop messages whose text is only emoji(s) |
 | `ignoreEmpty` | `WABOX_PI_IGNORE_EMPTY` | `true` | drop envelopes with no text and no media |
+| `logTokens` | `WABOX_PI_LOG_TOKENS` | `true` | log token usage and context size per turn |
 | `turnFeedbackReact` | `WABOX_PI_TURN_FEEDBACK_REACT` | `⏳` | emoji for the "still working" reaction |
 | `turnTimeoutMs` | `WABOX_PI_TURN_TIMEOUT_MS` | `600000` | abort a turn that runs longer than this (`0` = off) |
 | `contextCompactRatio` | `WABOX_PI_CONTEXT_COMPACT_RATIO` | `0.5` | compact the session past this share of the model's window |
@@ -355,6 +356,25 @@ Both are dropped without a reply: the envelope is still claimed (the read
 receipt fires), but the agent is not called and no reaction or message goes
 out. Mixed text ("ok 👍") is a normal message and gets an answer. Set
 `ignoreEmojiOnly` or `ignoreEmpty` to `false` to answer them.
+
+#### Token and context logging
+
+Every turn (and every scheduled task) logs what it cost and how big the
+context got:
+
+```
+[slug] turn done in 2693ms (1 outbox job(s)) | tokens in 2.5k out 94
+cacheRead 2.8k reasoning 74 total 5.4k $0.00141 | ctx 2.7k/262k (1.0%)
+```
+
+- `tokens` — input, output, cache read/write, reasoning, total, and the cost,
+  summed over the model requests of that turn.
+- `ctx` — the estimated context size against the model's window, in percent.
+  The estimate comes from pi's session projection, so it accounts for
+  compaction.
+
+`/status` shows the same numbers accumulated over the session. Set
+`logTokens` to `false` to keep the log quiet.
 
 #### Long turns and big contexts
 

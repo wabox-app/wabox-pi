@@ -38,6 +38,7 @@ the pi SDK, `chokidar`, and `typebox`.
 | `src/routing.js` | Conversation key + filesystem-safe slug. |
 | `src/envelope.js` | Envelope parsing/validation and reply targeting. |
 | `src/emoji.js` | Detects emoji-only and contentless envelopes (no reply). |
+| `src/usage.js` | Token/cost accounting and context formatting for the log. |
 | `src/fsutil.js` | Cross-filesystem move (inbox and state may be different mounts). |
 | `src/lock.js` | Single-instance PID lock. |
 | `src/logger.js` | stderr + state-dir log, no dependencies. |
@@ -63,6 +64,9 @@ the pi SDK, `chokidar`, and `typebox`.
   the agent replies instead of leaving the queue blocked. `maybeCompact`
   compacts before pi's own threshold, because a big context makes every
   request slow.
+- **Turns report their cost.** `usageSuffix` appends the turn's token usage and
+  the context size to the log line (`logTokens`). The context estimate comes
+  from pi's `getContextUsage()`, so it reflects compaction.
 - **Tools are the protocol.** `wabox_send` writes jobs during the turn. If the
   agent sends text/files through it, the final assistant text is *not* sent
   again. If it sends nothing, `autoReply` sends the final text (a safety net).

@@ -26,6 +26,7 @@ import { formatJobs } from './schedule.js';
 import { jobName, storedTask } from './tasks.js';
 import { isAudio, transcribeFile, transcriptionConfigured } from './transcribe.js';
 import { createFetchTool, createSearchTool } from './web.js';
+import { formatContext, formatUsage, summarizeUsage } from './usage.js';
 import { resolveBashTool, workspaceJailExtension } from './jail.js';
 
 export class ConversationAgent {
@@ -145,6 +146,18 @@ export class ConversationAgent {
       `[${this.slug}] session ready (${session.sessionId}, model ${session.model?.id ?? 'default'})`,
     );
     return session;
+  }
+
+  // Token and context accounting for the log line of a turn.
+  usageSuffix(session, fromIndex = 0) {
+    if (this.config.logTokens === false) return '';
+    try {
+      const usage = summarizeUsage(session.messages, fromIndex);
+      const context = session.getContextUsage?.() ?? null;
+      return ` | ${formatUsage(usage)} | ${formatContext(context)}`;
+    } catch (err) {
+      return ` | usage unavailable (${err?.message || err})`;
+    }
   }
 
   // Estimated context size of the session, in tokens.
@@ -279,6 +292,7 @@ export class ConversationAgent {
 
       const feedback = this.startTurnFeedback(current);
       const timeout = this.startTurnTimeout(session, current);
+      const usageFrom = session.messages.length;
 
       try {
         await session.prompt(prompt, { expandPromptTemplates });
@@ -311,7 +325,8 @@ export class ConversationAgent {
       const ms = Date.now() - started;
       this.log.info(
         `[${this.slug}] turn done in ${ms}ms (${this.turn.sent.length} outbox job(s)` +
-          `${this.turn.sentContent ? '' : ', auto-reply'})`,
+          `${this.turn.sentContent ? '' : ', auto-reply'})` +
+          this.usageSuffix(session, usageFrom),
       );
     } finally {
       // No tool call may outlive the turn that supplied its target.
@@ -391,6 +406,7 @@ export class ConversationAgent {
     const started = Date.now();
     try {
       const session = await this.ensureSession();
+      const usageFrom = session.messages.length;
       await session.prompt(buildTaskPrompt(task));
       const text = session.getLastAssistantText()?.trim() || '';
       // A silent task only sends what it explicitly passes to wabox_send.
@@ -399,7 +415,8 @@ export class ConversationAgent {
       }
       this.log.info(
         `[${this.slug}] task "${task.name}" done in ${Date.now() - started}ms ` +
-          `(${this.turn.sent.length} outbox job(s)${this.turn.sentContent ? '' : ', auto-reply'})`,
+          `(${this.turn.sent.length} outbox job(s)${this.turn.sentContent ? '' : ', auto-reply'})` +
+          this.usageSuffix(session, usageFrom),
       );
     } catch (err) {
       this.log.error(`[${this.slug}] task "${task.name}" failed: ${err?.message || err}`);
@@ -470,6 +487,13 @@ export class ConversationAgent {
     if (this.session) {
       const tokens = this.contextTokens(this.session);
       lines.push(`context: ~${Math.round(tokens / 1000)}k tokens`);
+      const totals = summarizeUsage(this.session.messages, 0);
+      if (totals.requests) {
+        lines.push(
+          `tokens: in ${totals.input} out ${totals.output} total ${totals.total} ` +
+            `(${totals.requests} requests, $${totals.cost.toFixed(4)})`,
+        );
+      }
     }
     if (this.config.thinkingLevel) lines.push(`thinking: ${this.config.thinkingLevel}`);
     if (this.modelFallbackMessage) lines.push(`note: ${this.modelFallbackMessage}`);

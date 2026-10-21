@@ -60,6 +60,7 @@ const CONVERSATION_KEYS = [
   'turnTimeoutMs',
   'ignoreEmojiOnly',
   'ignoreEmpty',
+  'logTokens',
   'contextCompactRatio',
   'contextCompactWarnTokens',
   'jail',
@@ -92,6 +93,7 @@ function normalizeConversation(override, base) {
   if (override.turnTimeoutMs !== undefined) out.turnTimeoutMs = int(override.turnTimeoutMs, 600_000, { min: 0 });
   if (override.ignoreEmojiOnly !== undefined) out.ignoreEmojiOnly = bool(override.ignoreEmojiOnly, true);
   if (override.ignoreEmpty !== undefined) out.ignoreEmpty = bool(override.ignoreEmpty, true);
+  if (override.logTokens !== undefined) out.logTokens = bool(override.logTokens, true);
   if (override.contextCompactRatio !== undefined) out.contextCompactRatio = Number(override.contextCompactRatio);
   if (override.contextCompactWarnTokens !== undefined) {
     out.contextCompactWarnTokens = int(override.contextCompactWarnTokens, 120_000, { min: 0 });
@@ -240,6 +242,9 @@ export function loadConfig({ cwd = process.cwd() } = {}) {
 
     tools: list(env('WABOX_PI_TOOLS') ?? file?.tools, DEFAULT_TOOLS),
     excludeTools: list(env('WABOX_PI_EXCLUDE_TOOLS') ?? file?.excludeTools, []),
+
+    // Log token consumption and context size per turn.
+    logTokens: bool(env('WABOX_PI_LOG_TOKENS') ?? file?.logTokens, true),
 
     // Messages with nothing to respond to (a WhatsApp reaction arrives as an
     // empty envelope; an emoji-only message) are dropped without a reply.
