@@ -31,16 +31,19 @@ class ConversationRunner {
     this.timer = null;
     this.stopped = false;
     this.idleWaiters = [];
+    this.lastActive = Date.now();
   }
 
   enqueue(envelope) {
     if (this.stopped) return;
+    this.lastActive = Date.now();
     this.queue.push({ kind: 'message', envelope });
     this.schedule();
   }
 
   enqueueTask({ task, identity }) {
     if (this.stopped) return;
+    this.lastActive = Date.now();
     this.queue.push({ kind: 'task', task, identity });
     this.schedule();
   }
@@ -56,6 +59,7 @@ class ConversationRunner {
 
   async drain() {
     if (this.stopped || this.busy) return;
+    this.lastActive = Date.now();
     this.busy = true;
     try {
       while (!this.stopped && this.queue.length) {
@@ -97,6 +101,10 @@ class ConversationRunner {
     return new Promise((resolve) => this.idleWaiters.push(resolve));
   }
 
+  isIdle() {
+    return !this.stopped && !this.busy && !this.timer && !this.queue.length;
+  }
+
   notifyIdle() {
     const waiters = this.idleWaiters.splice(0);
     for (const resolve of waiters) resolve();
@@ -111,6 +119,23 @@ class ConversationRunner {
   async dispose() {
     this.stop();
     await this.agent.dispose();
+  }
+}
+
+// Exported for tests.
+export function cleanupIdleRunners(runners, { runnerIdleTimeoutMs }, log) {
+  if (!runnerIdleTimeoutMs) return; // disabled
+  const deadline = Date.now() - runnerIdleTimeoutMs;
+  for (const [slug, runner] of runners) {
+    if (runner.lastActive < deadline && runner.isIdle()) {
+      const idleMs = Date.now() - runner.lastActive;
+      runners.delete(slug);
+      // Fire-and-forget dispose; any error is logged but not fatal.
+      runner.dispose().catch((err) => {
+        log.warn(`[${slug}] error disposing idle runner: ${err.message}`);
+      });
+      log.info(`[${slug}] runner expired after ${Math.round(idleMs / 1000)}s idle`);
+    }
   }
 }
 
@@ -247,6 +272,12 @@ export async function startDaemon(config, log) {
   });
   await scheduler.start();
 
+  // Periodically dispose runners that have been idle for too long so the
+  // process does not accumulate memory and open sessions forever.
+  const cleanupInterval = setInterval(() => {
+    cleanupIdleRunners(runners, config, log);
+  }, config.runnerCleanupIntervalMs);
+
   let stopping = false;
 
   // Claim files one at a time, in watcher order, so two messages from the same
@@ -318,6 +349,7 @@ export async function startDaemon(config, log) {
     if (stopping) return;
     stopping = true;
     log.info(`received ${signal}, shutting down`);
+    clearInterval(cleanupInterval);
     scheduler.stop();
     await watcher.close().catch(() => {});
 

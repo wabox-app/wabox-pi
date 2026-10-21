@@ -48,6 +48,29 @@ function list(value, fallback) {
   return fallback;
 }
 
+function normalizeImageGen(value, base) {
+  if (!value || typeof value !== 'object') return null;
+  const out = {};
+  if (value.provider !== undefined) out.provider = String(value.provider);
+  if (value.enabled !== undefined) out.enabled = bool(value.enabled, true);
+  if (value.model !== undefined) out.model = String(value.model);
+  if (value.dimensions !== undefined) out.dimensions = String(value.dimensions);
+  if (value.size !== undefined) out.size = String(value.size);
+  if (value.width !== undefined) out.width = int(value.width, null, { min: 64 });
+  if (value.height !== undefined) out.height = int(value.height, null, { min: 64 });
+  if (value.n !== undefined) out.n = int(value.n, 1, { min: 1 });
+  if (value.seed !== undefined) out.seed = Number(value.seed) || undefined;
+  if (value.timeoutMs !== undefined) out.timeoutMs = int(value.timeoutMs, 180_000, { min: 1_000 });
+  if (value.apiKey !== undefined) out.apiKey = String(value.apiKey) || null;
+  if (value.apiKeyEnv !== undefined) out.apiKeyEnv = String(value.apiKeyEnv) || null;
+  if (value.apiKeyFile !== undefined) {
+    out.apiKeyFile = value.apiKeyFile ? resolveFrom(base, value.apiKeyFile) : null;
+  }
+  if (value.piProvider !== undefined) out.piProvider = String(value.piProvider) || null;
+  if (value.usePiAuth !== undefined) out.usePiAuth = bool(value.usePiAuth, true);
+  return out;
+}
+
 // Keys a per-conversation override may set. Values replace the instance value
 // (lists are not merged). Path-valued keys are resolved against the config file.
 const CONVERSATION_KEYS = [
@@ -76,6 +99,7 @@ const CONVERSATION_KEYS = [
   'ackReact',
   'batchWindowMs',
   'workspaceTemplate',
+  'imageGen',
 ];
 
 function normalizeConversation(override, base) {
@@ -114,6 +138,9 @@ function normalizeConversation(override, base) {
   if (override.errorReply !== undefined) out.errorReply = bool(override.errorReply, true);
   if (override.ackReact !== undefined) out.ackReact = String(override.ackReact ?? '');
   if (override.batchWindowMs !== undefined) out.batchWindowMs = int(override.batchWindowMs, 0);
+  if (override.imageGen !== undefined) {
+    out.imageGen = override.imageGen === null ? null : normalizeImageGen(override.imageGen, base);
+  }
   return out;
 }
 
@@ -283,6 +310,9 @@ export function loadConfig({ cwd = process.cwd() } = {}) {
     transcription,
     web,
 
+    // Image generation via OpenRouter (see src/generate_image.js).
+    imageGen: normalizeImageGen(file?.imageGen, base),
+
     // Keep the agent inside its conversation workspace. `jail` path-jails the
     // file tools; `sandboxBash` decides how bash is contained:
     //   off   - no sandbox
@@ -330,6 +360,16 @@ export function loadConfig({ cwd = process.cwd() } = {}) {
     schedulerTickMs: int(env('WABOX_PI_SCHEDULER_TICK_MS') ?? file?.schedulerTickMs, 20_000, {
       min: 1_000,
     }),
+    runnerIdleTimeoutMs: int(
+      env('WABOX_PI_RUNNER_IDLE_TIMEOUT_MS') ?? file?.runnerIdleTimeoutMs,
+      21_600_000, // 6 hours
+      { min: 0 },
+    ),
+    runnerCleanupIntervalMs: int(
+      env('WABOX_PI_RUNNER_CLEANUP_INTERVAL_MS') ?? file?.runnerCleanupIntervalMs,
+      60_000, // 1 minute
+      { min: 1_000 },
+    ),
   };
 
   config.tasks = normalizeTasks(file?.tasks, { timezone: config.timezone });
