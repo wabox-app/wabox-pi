@@ -359,7 +359,7 @@ function formatResults(query, provider, results) {
   return lines.join('\n');
 }
 
-export function createFetchTool({ config, log }) {
+export function createFetchTool({ config, log, fetchImpl = fetch }) {
   return {
     name: 'wabox_fetch',
     label: 'Fetch a URL',
@@ -377,7 +377,7 @@ export function createFetchTool({ config, log }) {
       ),
     }),
     async execute(_id, params) {
-      const result = await fetchUrl(params.url, { web: config.web });
+      const result = await fetchUrl(params.url, { web: config.web, fetchImpl });
       const maxChars = Number.isFinite(params.maxChars) ? Math.max(0, params.maxChars) : MAX_CHARS;
       let text = result.text;
       if (text.length > maxChars) text = `${text.slice(0, maxChars)}\n…[truncated]`;
@@ -391,7 +391,7 @@ export function createFetchTool({ config, log }) {
   };
 }
 
-export function createSearchTool({ config, log }) {
+export function createSearchTool({ config, log, fetchImpl = fetch }) {
   return {
     name: 'wabox_search',
     label: 'Web search',
@@ -413,7 +413,7 @@ export function createSearchTool({ config, log }) {
       const web = max
         ? { ...config.web, search: { ...config.web?.search, maxResults: max } }
         : config.web;
-      const { provider, results } = await searchWeb(params.query, { web });
+      const { provider, results } = await searchWeb(params.query, { web, fetchImpl });
       log?.debug?.(`[web] searched "${params.query}" via ${provider} (${results.length})`);
       return {
         content: [{ type: 'text', text: formatResults(params.query, provider, results) }],

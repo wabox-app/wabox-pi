@@ -19,6 +19,7 @@ import {
 import { buildTaskPrompt, buildTurnPrompt } from './prompt.js';
 import { systemPromptAppend } from './instructions.js';
 import { createSendTool } from './tools.js';
+import { createGenerateImageTool } from './generate_image.js';
 import { proactiveJob, reactionJob, replyJob, writeJob } from './outbox.js';
 import { HELP, parseLocalCommand, parseScheduleCommand } from './commands.js';
 import { nextCronDate } from './cron.js';
@@ -26,6 +27,7 @@ import { formatJobs } from './schedule.js';
 import { jobName, storedTask } from './tasks.js';
 import { isAudio, transcribeFile, transcriptionConfigured } from './transcribe.js';
 import { createFetchTool, createSearchTool } from './web.js';
+import { fetchWithRetry } from './retry.js';
 import { formatContext, formatUsage, summarizeUsage } from './usage.js';
 import { resolveBashTool, workspaceJailExtension } from './jail.js';
 
@@ -58,9 +60,24 @@ export class ConversationAgent {
 
     const jailed = this.config.jail;
 
+    // Wrap the global fetch with retry/backoff for all external APIs.
+    const retryOptions = {
+      maxAttempts: this.config.apiRetryMaxAttempts,
+      initialDelayMs: this.config.apiRetryInitialDelayMs,
+      maxDelayMs: this.config.apiRetryMaxDelayMs,
+      multiplier: this.config.apiRetryMultiplier,
+      onRetry: ({ attempt, delay, error }) => {
+        this.log.warn(`[${this.slug}] API retry ${attempt}/${this.config.apiRetryMaxAttempts} in ${delay}ms: ${error.message}`);
+      },
+    };
+    const resilientFetch = fetchWithRetry(globalThis.fetch, retryOptions);
+
     // Resolve bash first: in "bwrap" mode a missing bubblewrap throws here,
     // before a session is created with an unsandboxed shell.
     const customTools = [createSendTool({ config: this.config, turn: this.turn, log: this.log })];
+    if (this.config.imageGen && this.config.imageGen.enabled !== false) {
+      customTools.push(createGenerateImageTool({ config: this.config, turn: this.turn, log: this.log, fetchImpl: resilientFetch }));
+    }
     const bashTool = resolveBashTool({
       config: this.config,
       workspace: this.paths.workspace,
@@ -76,8 +93,8 @@ export class ConversationAgent {
     // Web access runs in this process, not the sandboxed shell.
     const webFetch = Boolean(this.config.web?.fetch?.enabled);
     const webSearch = Boolean(this.config.web?.search?.enabled);
-    if (webFetch) customTools.push(createFetchTool({ config: this.config, log: this.log }));
-    if (webSearch) customTools.push(createSearchTool({ config: this.config, log: this.log }));
+    if (webFetch) customTools.push(createFetchTool({ config: this.config, log: this.log, fetchImpl: resilientFetch }));
+    if (webSearch) customTools.push(createSearchTool({ config: this.config, log: this.log, fetchImpl: resilientFetch }));
 
     const loader = new DefaultResourceLoader({
       cwd: this.paths.workspace,
@@ -102,6 +119,7 @@ export class ConversationAgent {
           jailed,
           sandboxedBash,
           web: { fetch: webFetch, search: webSearch },
+          imageGen: Boolean(this.config.imageGen?.enabled !== false),
         }),
       ],
     });
@@ -270,6 +288,7 @@ export class ConversationAgent {
 
     this.turn.envelope = current;
     this.turn.workspace = this.paths.workspace;
+    this.turn.mediaDir = this.paths.media;
     this.turn.sentContent = false;
     this.turn.sentAny = false;
     this.turn.sent = [];
@@ -352,6 +371,7 @@ export class ConversationAgent {
           config,
           filePath: media.localPath,
           log: this.log,
+          fetchImpl: resilientFetch,
         });
         envelope.media = { ...media, transcript: text, transcriptModel: model };
         await fs
@@ -398,6 +418,7 @@ export class ConversationAgent {
       number: identity.number ?? null,
     };
     this.turn.workspace = this.paths.workspace;
+    this.turn.mediaDir = this.paths.media;
     this.turn.sentContent = false;
     this.turn.sentAny = false;
     this.turn.sent = [];

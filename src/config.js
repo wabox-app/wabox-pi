@@ -370,6 +370,21 @@ export function loadConfig({ cwd = process.cwd() } = {}) {
       60_000, // 1 minute
       { min: 1_000 },
     ),
+
+    // Retry policy for external API calls (transcription, image generation, web fetch/search).
+    // Retries network errors (TypeError) and HTTP 5xx / 429 responses with exponential backoff.
+    apiRetryMaxAttempts: int(
+      env('WABOX_PI_API_RETRY_ATTEMPTS') ?? file?.apiRetryMaxAttempts, 3, { min: 1 },
+    ),
+    apiRetryInitialDelayMs: int(
+      env('WABOX_PI_API_RETRY_DELAY_MS') ?? file?.apiRetryInitialDelayMs, 1_000, { min: 0 },
+    ),
+    apiRetryMaxDelayMs: int(
+      env('WABOX_PI_API_RETRY_MAX_DELAY_MS') ?? file?.apiRetryMaxDelayMs, 30_000, { min: 0 },
+    ),
+    apiRetryMultiplier: Number(
+      env('WABOX_PI_API_RETRY_MULTIPLIER') ?? file?.apiRetryMultiplier ?? 2,
+    ) || 2,
   };
 
   config.tasks = normalizeTasks(file?.tasks, { timezone: config.timezone });
