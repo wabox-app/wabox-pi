@@ -37,6 +37,7 @@ the pi SDK, `chokidar`, and `typebox`.
 | `src/tasks.js` | Chat-created jobs (`stateDir/tasks.json`) + task-name derivation. |
 | `src/routing.js` | Conversation key + filesystem-safe slug. |
 | `src/envelope.js` | Envelope parsing/validation and reply targeting. |
+| `src/emoji.js` | Detects emoji-only and contentless envelopes (no reply). |
 | `src/fsutil.js` | Cross-filesystem move (inbox and state may be different mounts). |
 | `src/lock.js` | Single-instance PID lock. |
 | `src/logger.js` | stderr + state-dir log, no dependencies. |
@@ -46,6 +47,9 @@ the pi SDK, `chokidar`, and `typebox`.
 
 - **Claim = rename out of `inbox/`.** That unlink is wabox-core's read-receipt
   signal. Read the JSON into memory first, rename immediately, then do slow work.
+- **No intent, no reply.** A WhatsApp reaction arrives as an envelope with no
+  text and no media; an emoji-only message is the same. The daemon drops both
+  after claiming them (`src/emoji.js`), with no reaction and no agent turn.
 - **Reply to `from` verbatim.** DMs can arrive as `@lid` or `@s.whatsapp.net`;
   switching identities desyncs the recipient's Signal session. Never "normalize"
   the JID in the harness.

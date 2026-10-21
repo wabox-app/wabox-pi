@@ -135,6 +135,8 @@ lives at `${XDG_CONFIG_HOME:-~/.config}/wabox-pi/config.json`:
 | `timezone` | `WABOX_PI_TIMEZONE` | system | default IANA time zone for `tasks` cron |
 | `schedulerTickMs` | `WABOX_PI_SCHEDULER_TICK_MS` | `20000` | how often the scheduler checks for due tasks |
 | `turnFeedbackMs` | `WABOX_PI_TURN_FEEDBACK_MS` | `60000` | react to the message when a turn takes this long (`0` = off) |
+| `ignoreEmojiOnly` | `WABOX_PI_IGNORE_EMOJI_ONLY` | `true` | drop messages whose text is only emoji(s) |
+| `ignoreEmpty` | `WABOX_PI_IGNORE_EMPTY` | `true` | drop envelopes with no text and no media |
 | `turnFeedbackReact` | `WABOX_PI_TURN_FEEDBACK_REACT` | `⏳` | emoji for the "still working" reaction |
 | `turnTimeoutMs` | `WABOX_PI_TURN_TIMEOUT_MS` | `600000` | abort a turn that runs longer than this (`0` = off) |
 | `contextCompactRatio` | `WABOX_PI_CONTEXT_COMPACT_RATIO` | `0.5` | compact the session past this share of the model's window |
@@ -341,6 +343,18 @@ Behavior notes:
 - A task missed while the daemon was down is **not** replayed.
 - Invalid tasks (bad cron, unknown timezone, missing target) are reported at
   startup and by `/tasks`; they never crash the daemon.
+
+#### Messages with nothing to answer
+
+A WhatsApp **reaction** (👍 on the agent's message) reaches the inbox as an
+envelope with no text and no media — wabox-core's `extractText` only reads
+conversation text and captions, so a reaction carries nothing. A message whose
+text is only emoji(s) is the same idea.
+
+Both are dropped without a reply: the envelope is still claimed (the read
+receipt fires), but the agent is not called and no reaction or message goes
+out. Mixed text ("ok 👍") is a normal message and gets an answer. Set
+`ignoreEmojiOnly` or `ignoreEmpty` to `false` to answer them.
 
 #### Long turns and big contexts
 

@@ -58,6 +58,8 @@ const CONVERSATION_KEYS = [
   'turnFeedbackMs',
   'turnFeedbackReact',
   'turnTimeoutMs',
+  'ignoreEmojiOnly',
+  'ignoreEmpty',
   'contextCompactRatio',
   'contextCompactWarnTokens',
   'jail',
@@ -88,6 +90,8 @@ function normalizeConversation(override, base) {
   if (override.turnFeedbackMs !== undefined) out.turnFeedbackMs = int(override.turnFeedbackMs, 60_000, { min: 0 });
   if (override.turnFeedbackReact !== undefined) out.turnFeedbackReact = String(override.turnFeedbackReact);
   if (override.turnTimeoutMs !== undefined) out.turnTimeoutMs = int(override.turnTimeoutMs, 600_000, { min: 0 });
+  if (override.ignoreEmojiOnly !== undefined) out.ignoreEmojiOnly = bool(override.ignoreEmojiOnly, true);
+  if (override.ignoreEmpty !== undefined) out.ignoreEmpty = bool(override.ignoreEmpty, true);
   if (override.contextCompactRatio !== undefined) out.contextCompactRatio = Number(override.contextCompactRatio);
   if (override.contextCompactWarnTokens !== undefined) {
     out.contextCompactWarnTokens = int(override.contextCompactWarnTokens, 120_000, { min: 0 });
@@ -236,6 +240,11 @@ export function loadConfig({ cwd = process.cwd() } = {}) {
 
     tools: list(env('WABOX_PI_TOOLS') ?? file?.tools, DEFAULT_TOOLS),
     excludeTools: list(env('WABOX_PI_EXCLUDE_TOOLS') ?? file?.excludeTools, []),
+
+    // Messages with nothing to respond to (a WhatsApp reaction arrives as an
+    // empty envelope; an emoji-only message) are dropped without a reply.
+    ignoreEmojiOnly: bool(env('WABOX_PI_IGNORE_EMOJI_ONLY') ?? file?.ignoreEmojiOnly, true),
+    ignoreEmpty: bool(env('WABOX_PI_IGNORE_EMPTY') ?? file?.ignoreEmpty, true),
 
     // Chat model for the agent. A bare model id (or `provider/id`) plus an
     // optional thinking level; per-slug overrides win. See resolveCliModel.

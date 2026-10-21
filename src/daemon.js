@@ -14,6 +14,7 @@ import { conversationConfig } from './config.js';
 import { ensureConversation, readIdentity, rememberIdentity, seedWorkspace } from './workspace.js';
 import { Scheduler, normalizeTasks } from './schedule.js';
 import { TaskStore, storedTask } from './tasks.js';
+import { isNoopEnvelope } from './emoji.js';
 import { writeJob, reactionJob } from './outbox.js';
 import { moveFile } from './fsutil.js';
 import { ConversationAgent } from './agent.js';
@@ -259,6 +260,17 @@ export async function startDaemon(config, log) {
       const claimed = await claimEnvelope(file, config, log);
       if (!claimed || stopping) return;
       const { envelope, slug, paths, config: convConfig } = claimed;
+
+      // A reaction or an emoji-only message carries no intent: the envelope
+      // was already claimed (read receipt), but there is nothing to answer.
+      const noop = isNoopEnvelope(envelope, {
+        ignoreEmojiOnly: convConfig.ignoreEmojiOnly,
+        ignoreEmpty: convConfig.ignoreEmpty,
+      });
+      if (noop) {
+        log.info(`[${slug}] ignored ${noop} message ${envelope.id}`);
+        return;
+      }
 
       log.info(
         `[${slug}] claimed ${envelope.id} from ${envelope.pushName || envelope.number || envelope.from}` +
