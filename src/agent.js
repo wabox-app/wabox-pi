@@ -99,7 +99,7 @@ export class ConversationAgent {
 
     const memory = readMemory(this.paths.workspace);
     if (memory) {
-      this.log.debug(`[${this.slug}] loaded memory.md (${memory.length} chars)`);
+      this.log.debug(`[${this.slug}] loaded MEMORY.md (${memory.length} chars)`);
     }
 
     const loader = new DefaultResourceLoader({
@@ -548,12 +548,12 @@ export class ConversationAgent {
   }
 
   async memoryText(args) {
-    const file = path.join(this.paths.workspace, 'memory.md');
+    const file = path.join(this.paths.workspace, 'MEMORY.md');
     const action = (args || '').trim().toLowerCase();
     if (action === 'clear' || action === 'reset') {
       try {
         await fs.rm(file, { force: true });
-        return 'memory.md cleared. I will no longer see stored facts on new sessions.';
+        return 'MEMORY.md cleared. I will no longer see stored facts on new sessions.';
       } catch (err) {
         return `Could not clear memory: ${err.message}`;
       }
@@ -562,9 +562,9 @@ export class ConversationAgent {
     try {
       content = await fs.readFile(file, 'utf8');
     } catch {
-      return 'No memory.md yet. I remember durable facts when you ask me to write them into memory.md.';
+      return 'No MEMORY.md yet. I remember durable facts when you ask me to write them into MEMORY.md.';
     }
-    return `*memory.md*\n\n${content.trim()}`;
+    return `*MEMORY.md*\n\n${content.trim()}`;
   }
 
   async jobsText() {

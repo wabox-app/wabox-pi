@@ -65,7 +65,7 @@ ${memory}
 ` : `
 ## Memory
 
-You may keep durable personal notes in memory.md in that workspace (use the
+You may keep durable personal notes in MEMORY.md in that workspace (use the
 read/write tools). Facts recorded there survive across sessions and are shown
 to you at the start of each new session. Record things the user explicitly
 asks you to remember (preferences, names, projects, constraints, etc.).

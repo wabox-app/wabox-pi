@@ -34,17 +34,17 @@ test('readIdentity returns null when nothing was recorded', async () => {
   await fs.rm(dir, { recursive: true, force: true });
 });
 
-test('readMemory returns null when memory.md does not exist', () => {
+test('readMemory returns null when MEMORY.md does not exist', () => {
   const dir = path.join(os.tmpdir(), 'wabox-ws-' + Date.now());
   fsSync.mkdirSync(dir, { recursive: true });
   assert.equal(readMemory(dir), null);
   fsSync.rmSync(dir, { recursive: true, force: true });
 });
 
-test('readMemory returns the trimmed content of memory.md', () => {
+test('readMemory returns the trimmed content of MEMORY.md', () => {
   const dir = path.join(os.tmpdir(), 'wabox-ws-' + Date.now());
   fsSync.mkdirSync(dir, { recursive: true });
-  fsSync.writeFileSync(path.join(dir, 'memory.md'), '  User prefers dark mode.  \n');
+  fsSync.writeFileSync(path.join(dir, 'MEMORY.md'), '  User prefers dark mode.  \n');
   assert.equal(readMemory(dir), 'User prefers dark mode.');
   fsSync.rmSync(dir, { recursive: true, force: true });
 });

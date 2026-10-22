@@ -71,7 +71,7 @@ export async function ensureConversation(config, slug) {
 // Read the conversation memory file, if one exists. Synchronous because
 // this is consumed during session setup inside appendSystemPromptOverride.
 export function readMemory(workspace) {
-  const file = path.join(workspace, 'memory.md');
+  const file = path.join(workspace, 'MEMORY.md');
   try {
     return fsSync.readFileSync(file, 'utf8').trim() || null;
   } catch {
