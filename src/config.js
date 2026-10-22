@@ -385,6 +385,21 @@ export function loadConfig({ cwd = process.cwd() } = {}) {
     apiRetryMultiplier: Number(
       env('WABOX_PI_API_RETRY_MULTIPLIER') ?? file?.apiRetryMultiplier ?? 2,
     ) || 2,
+
+    // Thread routing: enable multi-topic sessions per chat (disabled by default).
+    threads: bool(env('WABOX_PI_THREADS') ?? file?.threads, false),
+    threadHotMinutes: int(
+      env('WABOX_PI_THREAD_HOT_MINUTES') ?? file?.threadHotMinutes, 2, { min: 0 },
+    ),
+    router: {
+      enabled: bool(env('WABOX_PI_ROUTER_ENABLED') ?? file?.router?.enabled, true),
+      baseUrl: env('WABOX_PI_ROUTER_URL') || file?.router?.baseUrl || null,
+      model: env('WABOX_PI_ROUTER_MODEL') || file?.router?.model || null,
+      apiKey: env('WABOX_PI_ROUTER_KEY') || file?.router?.apiKey || null,
+      apiKeyEnv: file?.router?.apiKeyEnv || null,
+      apiKeyFile: file?.router?.apiKeyFile ? resolveFrom(base, file.router.apiKeyFile) : null,
+      timeoutMs: int(file?.router?.timeoutMs, 8_000, { min: 1_000 }),
+    },
   };
 
   config.tasks = normalizeTasks(file?.tasks, { timezone: config.timezone });

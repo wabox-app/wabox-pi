@@ -12,6 +12,8 @@ import { readEnvelope } from './envelope.js';
 import { conversationKey, slugFor } from './routing.js';
 import { conversationConfig } from './config.js';
 import { ensureConversation, readIdentity, rememberIdentity, seedWorkspace } from './workspace.js';
+import { resolveThread } from './router.js';
+import { threadAwarePaths, touchThread } from './threads.js';
 import { Scheduler, normalizeTasks } from './schedule.js';
 import { TaskStore, storedTask } from './tasks.js';
 import { isNoopEnvelope } from './emoji.js';
@@ -20,7 +22,7 @@ import { moveFile } from './fsutil.js';
 import { ConversationAgent } from './agent.js';
 
 class ConversationRunner {
-  constructor({ config, log, slug, paths, jobs }) {
+  constructor({ config, log, slug, paths, jobs, threadId }) {
     this.config = config;
     this.log = log;
     this.slug = slug;
@@ -32,6 +34,7 @@ class ConversationRunner {
     this.stopped = false;
     this.idleWaiters = [];
     this.lastActive = Date.now();
+    this.threadId = threadId || 'default';
   }
 
   enqueue(envelope) {
@@ -70,6 +73,8 @@ class ConversationRunner {
             await this.agent.runTask(task, identity);
           } catch {
             // runTask already logged it.
+          } finally {
+            await touchThread(this.paths.root, this.threadId, { messageCountDelta: 1 });
           }
           continue;
         }
@@ -85,6 +90,8 @@ class ConversationRunner {
         } catch {
           // handleBatch already logged it. Keep draining: one bad message must
           // not block the conversation forever.
+        } finally {
+          await touchThread(this.paths.root, this.threadId, { messageCountDelta: 1 });
         }
       }
     } finally {
@@ -233,11 +240,14 @@ export async function startDaemon(config, log) {
     },
   };
 
-  const runnerFor = (slug, paths, convConfig) => {
-    let runner = runners.get(slug);
+  const runnerKey = (slug, threadId) => `${slug}:${threadId || 'default'}`;
+
+  const runnerFor = (slug, threadId, paths, convConfig) => {
+    const key = runnerKey(slug, threadId);
+    let runner = runners.get(key);
     if (!runner) {
-      runner = new ConversationRunner({ config: convConfig, log, slug, paths, jobs });
-      runners.set(slug, runner);
+      runner = new ConversationRunner({ config: convConfig, log, slug, paths, jobs, threadId });
+      runners.set(key, runner);
     }
     return runner;
   };
@@ -260,7 +270,7 @@ export async function startDaemon(config, log) {
       return;
     }
 
-    runnerFor(slug, paths, convConfig).enqueueTask({ task, identity });
+    runnerFor(slug, 'default', paths, convConfig).enqueueTask({ task, identity });
   };
 
   scheduler = new Scheduler({
@@ -303,8 +313,19 @@ export async function startDaemon(config, log) {
         return;
       }
 
+      // Decide which thread this message belongs to.
+      const { threadId, paths: threadPaths, switched } = await resolveThread({
+        envelope,
+        slug,
+        config: convConfig,
+        paths,
+        log,
+        fetchImpl: globalThis.fetch,
+      });
+
       log.info(
-        `[${slug}] claimed ${envelope.id} from ${envelope.pushName || envelope.number || envelope.from}` +
+        `[${slug}:${threadId}] claimed ${envelope.id} from ${envelope.pushName || envelope.number || envelope.from}` +
+          `${switched ? ' (switched thread)' : ''}` +
           `${envelope.media ? ` (${envelope.media.type})` : ''}`,
       );
 
@@ -312,11 +333,11 @@ export async function startDaemon(config, log) {
         try {
           await writeJob(config.outboxDir, reactionJob(envelope, convConfig.ackReact));
         } catch (err) {
-          log.warn(`[${slug}] ack reaction failed: ${err.message}`);
+          log.warn(`[${slug}:${threadId}] ack reaction failed: ${err.message}`);
         }
       }
 
-      runnerFor(slug, paths, convConfig).enqueue(envelope);
+      runnerFor(slug, threadId, threadPaths, convConfig).enqueue(envelope);
     } catch (err) {
       log.error(`failed to handle ${file}: ${err?.stack || err}`);
     }
