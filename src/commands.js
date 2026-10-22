@@ -14,6 +14,7 @@ export const LOCAL_COMMANDS = new Set([
   'new',
   'reset',
   'clear',
+  'memory',
 ]);
 
 export const HELP = [
@@ -25,6 +26,7 @@ export const HELP = [
   '/schedule <cron> <prompt> — schedule a job for this chat',
   '/unschedule <name> — remove a job you scheduled from chat',
   '/new — start a fresh conversation session',
+  '/memory — show or clear durable notes (memory.md)',
   '/ping — check that the harness is alive',
 ].join('\n');
 

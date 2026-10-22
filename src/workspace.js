@@ -10,6 +10,7 @@
 // conversation; other chats and the audit trail are untouched.
 
 import fs from 'node:fs/promises';
+import fsSync from 'node:fs';
 import path from 'node:path';
 
 export function conversationPaths(config, slug) {
@@ -65,6 +66,17 @@ export async function ensureConversation(config, slug) {
     ),
   );
   return paths;
+}
+
+// Read the conversation memory file, if one exists. Synchronous because
+// this is consumed during session setup inside appendSystemPromptOverride.
+export function readMemory(workspace) {
+  const file = path.join(workspace, 'memory.md');
+  try {
+    return fsSync.readFileSync(file, 'utf8').trim() || null;
+  } catch {
+    return null;
+  }
 }
 
 // Seed instructions once. The user (or the agent) owns the file after that;

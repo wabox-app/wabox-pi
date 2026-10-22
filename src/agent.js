@@ -30,6 +30,7 @@ import { createFetchTool, createSearchTool } from './web.js';
 import { fetchWithRetry } from './retry.js';
 import { formatContext, formatUsage, summarizeUsage } from './usage.js';
 import { resolveBashTool, workspaceJailExtension } from './jail.js';
+import { readMemory } from './workspace.js';
 
 export class ConversationAgent {
   constructor({ config, log, slug, paths, jobs }) {
@@ -96,6 +97,11 @@ export class ConversationAgent {
     if (webFetch) customTools.push(createFetchTool({ config: this.config, log: this.log, fetchImpl: resilientFetch }));
     if (webSearch) customTools.push(createSearchTool({ config: this.config, log: this.log, fetchImpl: resilientFetch }));
 
+    const memory = readMemory(this.paths.workspace);
+    if (memory) {
+      this.log.debug(`[${this.slug}] loaded memory.md (${memory.length} chars)`);
+    }
+
     const loader = new DefaultResourceLoader({
       cwd: this.paths.workspace,
       agentDir: getAgentDir(),
@@ -120,6 +126,7 @@ export class ConversationAgent {
           sandboxedBash,
           web: { fetch: webFetch, search: webSearch },
           imageGen: Boolean(this.config.imageGen?.enabled !== false),
+          memory,
         }),
       ],
     });
@@ -483,6 +490,9 @@ export class ConversationAgent {
         await this.reset();
         reply = 'Started a new session. Previous context cleared.';
         break;
+      case 'memory':
+        reply = await this.memoryText(command.args);
+        break;
       default:
         reply = HELP;
     }
@@ -535,6 +545,26 @@ export class ConversationAgent {
         : 'active: not started',
     );
     return lines.join('\n');
+  }
+
+  async memoryText(args) {
+    const file = path.join(this.paths.workspace, 'memory.md');
+    const action = (args || '').trim().toLowerCase();
+    if (action === 'clear' || action === 'reset') {
+      try {
+        await fs.rm(file, { force: true });
+        return 'memory.md cleared. I will no longer see stored facts on new sessions.';
+      } catch (err) {
+        return `Could not clear memory: ${err.message}`;
+      }
+    }
+    let content;
+    try {
+      content = await fs.readFile(file, 'utf8');
+    } catch {
+      return 'No memory.md yet. I remember durable facts when you ask me to write them into memory.md.';
+    }
+    return `*memory.md*\n\n${content.trim()}`;
   }
 
   async jobsText() {

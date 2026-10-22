@@ -2,7 +2,7 @@
 // instructions still apply). Kept short: the per-turn prompt carries the
 // message; this carries the WhatsApp conventions.
 
-export function systemPromptAppend({ workspace, jailed = false, sandboxedBash = false, web = {} }) {
+export function systemPromptAppend({ workspace, jailed = false, sandboxedBash = false, web = {}, imageGen = false, memory = null }) {
   let confinement;
   if (jailed && sandboxedBash) {
     confinement = `Stay inside that directory: it is the only place you can write. The file
@@ -43,6 +43,9 @@ You are talking to a person over WhatsApp, not to a terminal user.
       .filter(Boolean)
       .join(' and ') || 'the web tools when available'
   } instead of curl or wget.
+  } instead of curl or wget.${imageGen ? `
+- Generate images with \`wabox_generate_image\` when asked. The saved file can
+  then be attached with \`wabox_send\`.` : ''}
 - Files you attach must be readable paths. Write generated files into your
   workspace first, then pass their paths to \`wabox_send\`.
 - Do not mention internal ids, JIDs, session ids, or tool names to the user.
@@ -53,5 +56,18 @@ ${workspace}
 ${confinement}
 
 You may keep durable notes in AGENTS.md in that workspace.
-`.trim();
+${memory ? `
+## Memory
+
+The following facts about this conversation have been recorded:
+
+${memory}
+` : `
+## Memory
+
+You may keep durable personal notes in memory.md in that workspace (use the
+read/write tools). Facts recorded there survive across sessions and are shown
+to you at the start of each new session. Record things the user explicitly
+asks you to remember (preferences, names, projects, constraints, etc.).
+`}`.trim();
 }
