@@ -45,6 +45,7 @@ export class ConversationAgent {
     this.lastCompactWarn = 0;
     this.turnTimedOut = false;
     this.lastUsed = Date.now();
+    this.lastModelError = null;
     this.turns = 0;
     this.turn = {
       envelope: null,
@@ -161,7 +162,9 @@ export class ConversationAgent {
       } else if (event.type === 'message_end') {
         const message = event.message;
         if (message?.role === 'assistant' && message.stopReason === 'error') {
-          this.log.warn(`[${this.slug}] assistant stopped with an error`);
+          const errorMsg = message.errorMessage || message.error || 'unknown error';
+          this.log.warn(`[${this.slug}] assistant stopped with an error: ${errorMsg}`);
+          this.lastModelError = errorMsg;
         }
       }
     });
@@ -344,6 +347,16 @@ export class ConversationAgent {
             }),
           );
         }
+      } else if (!this.turn.sentContent && this.lastModelError) {
+        // The model produced no output because it errored (e.g. rate limit,
+        // provider outage). Tell the user instead of staying silent.
+        await writeJob(
+          this.config.outboxDir,
+          replyJob(current, {
+            text: `⚠️ O modelo falhou: ${this.lastModelError}. Tente novamente ou mude de modelo com /model.`,
+          }),
+        );
+        this.lastModelError = null;
       } else if (!this.turn.sentContent && this.config.autoReply && text) {
         await writeJob(this.config.outboxDir, replyJob(current, { text }));
       }
