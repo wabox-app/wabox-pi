@@ -248,6 +248,7 @@ export async function startDaemon(config, log) {
     if (!runner) {
       runner = new ConversationRunner({ config: convConfig, log, slug, paths, jobs, threadId });
       runners.set(key, runner);
+      log.info(`[${slug}:${threadId}] new runner created — context ready`);
     }
     return runner;
   };
@@ -322,6 +323,10 @@ export async function startDaemon(config, log) {
         log,
         fetchImpl: globalThis.fetch,
       });
+
+      if (switched) {
+        log.info(`[${slug}:${threadId}] context switched — running on different thread`);
+      }
 
       log.info(
         `[${slug}:${threadId}] claimed ${envelope.id} from ${envelope.pushName || envelope.number || envelope.from}` +
