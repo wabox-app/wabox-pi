@@ -32,6 +32,7 @@ the pi SDK, `chokidar`, and `typebox`.
 | `src/jail.js` | Path-jail file tools; bubblewrap-sandbox `bash`. |
 | `src/transcribe.js` | Inbound-audio transcription (command, OpenAI API, or OpenRouter chat). |
 | `src/web.js` | `wabox_fetch` / `wabox_search` tools (SSRF-guarded, run in-process). |
+| `src/generate_image.js` | `wabox_generate_image` tool (OpenRouter/Pollinations, run in-process). |
 | `src/cron.js` | Time-zone-aware 5-field cron parsing + next-run search (pure). |
 | `src/schedule.js` | Scheduled-task normalization, due check, last-run persistence. |
 | `src/tasks.js` | Chat-created jobs (`stateDir/tasks.json`) + task-name derivation. |
