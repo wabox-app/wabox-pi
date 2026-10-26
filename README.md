@@ -81,6 +81,8 @@ What it exposes per conversation:
   tools, jail/sandbox, auto-reply, …). Empty fields inherit the instance value
   (shown as a placeholder); saving rewrites `conversations.<slug>` in
   `config.json` and asks the daemon to reload that chat.
+- **Visão** — the image fallback: mode, vision model (or local command), prompt,
+  and limits. See [Image fallback](#image-fallback-vision-model).
 - **System prompt** — two layers: an inline `systemPrompt` override in
   `config.json` and the workspace's `SYSTEM.md`, appended to pi's prompt after
   the WhatsApp etiquette rules. Both are read when a session is created.
@@ -191,6 +193,7 @@ lives at `${XDG_CONFIG_HOME:-~/.config}/wabox-pi/config.json`:
 | `logLevel` | `WABOX_PI_LOG_LEVEL` | `info` | `debug`, `info`, `warn`, `error` |
 | `dashboardPort` | `WABOX_PI_DASHBOARD_PORT` | `0` (off) | dashboard HTTP port |
 | `dashboardHost` | `WABOX_PI_DASHBOARD_HOST` | `127.0.0.1` | dashboard bind address |
+| `vision` | — | disabled | inbound-image fallback (see below) |
 
 #### Per-conversation overrides
 
@@ -222,11 +225,12 @@ a single chat, keyed by the conversation slug (the folder name under
 Overridable keys: `workspace`, `modelProvider`, `model`, `thinkingLevel`,
 `systemPrompt`, `jail`, `sandboxBash`, `sandboxNetwork`, `sandboxDenyRead`,
 `sandboxAllowRead`, `sandboxBashBin`, `tools`, `excludeTools`, `autoReply`,
-`errorReply`, `ackReact`, `batchWindowMs`, `workspaceTemplate`. Values replace
-the instance value (lists are not merged); relative paths resolve against the
-config file. A per-slug value wins over the environment variable for that
+`errorReply`, `ackReact`, `batchWindowMs`, `workspaceTemplate`, `vision`. Values
+replace the instance value (lists are not merged); relative paths resolve against
+the config file. A per-slug value wins over the environment variable for that
 conversation. `groupPerParticipant` is instance-wide because it changes the
-slug itself.
+slug itself. `vision` is the exception: its fields are merged over the instance
+block.
 
 `systemPrompt` is an inline text appended to the system prompt for that
 conversation. The workspace's `SYSTEM.md`, when present, is appended after it.
@@ -245,6 +249,46 @@ only the harness working directory (`cwd`) is redirected.
 
 Without `inboxDir`/`outboxDir`, `wabox-pi` asks `wabox status` (and
 `wabox status --json` on newer cores) before falling back to XDG defaults.
+
+#### Image fallback (vision model)
+
+pi models accept text and image input — but many useful chat models are
+text-only. When an image (or sticker) arrives and the active model does not
+accept images, wabox-pi describes it with a separate vision model and puts the
+description in the turn prompt, next to the attachment path. The agent is told
+the picture is text-only, so it does not pretend to have looked at it.
+
+Any pi model that accepts images works; pi's stored credentials are reused, so
+there is no extra secret when you already use that provider in pi.
+
+```json
+{
+  "vision": {
+    "modelProvider": "openrouter",
+    "model": "google/gemini-2.5-flash",
+    "mode": "auto"
+  }
+}
+```
+
+| Key | Meaning |
+| --- | --- |
+| `enabled` | default `true` once a backend is set |
+| `mode` | `auto` (default) describes only when the chat model cannot read images; `always` describes every image; `off` disables |
+| `modelProvider` / `model` | the vision model, resolved against pi's catalog |
+| `command` | local alternative: shell command receiving the image path (or `{file}`); stdout is the description |
+| `prompt` | instruction override for the vision model |
+| `maxTokens` | description budget (default `1024`) |
+| `maxBytes` | refuse images larger than this (default `8000000`) |
+| `timeoutMs` | default `120000` |
+| `apiKey` | optional key for the pi model (otherwise pi's stored credential) |
+| `writeSidecar` | default `true`; writes `<file>.description.txt` next to the media |
+
+A conversation can override the `vision` block (`conversations.<slug>.vision`);
+the pieces are merged, so setting only `mode: "always"` keeps the instance
+model. The dashboard's **Visão** tab edits this. If the description fails, the
+prompt says so and the agent is told not to guess the image contents. Vision
+runs in the daemon process, like transcription.
 
 #### Web access
 

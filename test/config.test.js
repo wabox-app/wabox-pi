@@ -178,3 +178,74 @@ test('conversationPaths falls back to the state dir', () => {
   const paths = conversationPaths(instance(), 'slug-a');
   assert.equal(paths.workspace, path.join('/state/conversations/slug-a', 'workspace'));
 });
+
+test('loadConfig normalizes the vision block and enables it only with a backend', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'wabox-cfg-'));
+  const cfg = path.join(dir, 'config.json');
+  const previous = process.env.WABOX_PI_CONFIG;
+  try {
+    await fs.writeFile(
+      cfg,
+      JSON.stringify({
+        inboxDir: 'inbox',
+        outboxDir: 'outbox',
+        stateDir: 'state',
+        vision: { modelProvider: 'openrouter', model: 'google/gemini-flash', maxBytes: 4096 },
+      }),
+    );
+    process.env.WABOX_PI_CONFIG = cfg;
+    const config = loadConfig();
+    assert.equal(config.vision.enabled, undefined);
+    assert.equal(config.vision.mode, 'auto');
+    assert.equal(config.vision.modelProvider, 'openrouter');
+    assert.equal(config.vision.maxBytes, 4096);
+
+    await fs.writeFile(cfg, JSON.stringify({ stateDir: 'state' }));
+    const withoutVision = loadConfig();
+    // No derived `enabled`: a conversation may supply the backend, and an
+    // inherited false would disable it.
+    assert.equal(withoutVision.vision.enabled, undefined);
+    assert.equal(withoutVision.vision.mode, 'auto');
+
+    await fs.writeFile(
+      cfg,
+      JSON.stringify({ stateDir: 'state', vision: { model: 'x/y', enabled: false } }),
+    );
+    assert.equal(loadConfig().vision.enabled, false);
+  } finally {
+    if (previous === undefined) delete process.env.WABOX_PI_CONFIG;
+    else process.env.WABOX_PI_CONFIG = previous;
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('a conversation can supply the vision backend without the instance enabling it', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'wabox-cfg-'));
+  const cfg = path.join(dir, 'config.json');
+  const previous = process.env.WABOX_PI_CONFIG;
+  try {
+    await fs.writeFile(
+      cfg,
+      JSON.stringify({
+        stateDir: 'state',
+        conversations: {
+          'slug-a': {
+            vision: { modelProvider: 'openrouter', model: 'google/gemini-2.5-flash', mode: 'auto' },
+          },
+        },
+      }),
+    );
+    process.env.WABOX_PI_CONFIG = cfg;
+    const { conversationConfig } = await import('../src/config.js');
+    const { visionConfigured } = await import('../src/vision.js');
+    const config = loadConfig();
+    const merged = conversationConfig(config, 'slug-a');
+    assert.equal(visionConfigured(merged.vision), true);
+    assert.equal(merged.vision.model, 'google/gemini-2.5-flash');
+    assert.equal(merged.vision.enabled, undefined);
+  } finally {
+    if (previous === undefined) delete process.env.WABOX_PI_CONFIG;
+    else process.env.WABOX_PI_CONFIG = previous;
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});

@@ -8,6 +8,9 @@ All notable changes to this project are documented here. The format follows
 
 ### Fixed
 
+- A per-conversation `vision` block now works without an instance-level backend:
+  the instance no longer derives `enabled: false`, which the deep merge used to
+  apply over the conversation's model and silently disable image descriptions.
 - Transcription received no retrying `fetch`: `transcribeBatch` referenced a
   fetch wrapper local to `ensureSession`, so configuring transcription threw a
   `ReferenceError` at turn time. The wrapper now lives on the agent.
@@ -23,6 +26,11 @@ All notable changes to this project are documented here. The format follows
   and an optional workspace `SYSTEM.md`, both appended to pi's prompt.
 - `dashboardHost` / `dashboardPort` settings, `WABOX_PI_DASHBOARD_*` env vars,
   and an opt-in bearer token for non-loopback binds.
+- Image fallback for text-only chat models: inbound images are described by a
+  separate vision model (`vision.modelProvider`/`model`, any pi model that
+  accepts images) or a local command, with the description injected into the
+  turn prompt. Modes `auto`/`always`/`off`, per-conversation overrides, and a
+  **Visão** tab in the dashboard.
 
 - Initial harness: watches wabox-core's inbox, claims envelopes (read receipt on
   pickup), runs one persistent pi session per conversation, and replies through

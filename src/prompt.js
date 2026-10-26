@@ -24,6 +24,13 @@ function mediaLine(media) {
   const base = bits.join(' — ');
   if (media.transcript) return `${base}\nTranscript: ${media.transcript}`;
   if (media.transcriptError) return `${base}\nTranscription failed: ${media.transcriptError}`;
+  if (media.description) {
+    return (
+      `${base}\nImage description (${media.descriptionModel || 'vision model'}):\n${media.description}\n` +
+      '(Use this description; do not try to read the image file with the read tool.)'
+    );
+  }
+  if (media.descriptionError) return `${base}\nImage description failed: ${media.descriptionError}`;
   return base;
 }
 

@@ -27,6 +27,7 @@ import { formatJobs } from './schedule.js';
 import { jobName, storedTask } from './tasks.js';
 import { isAudio, transcribeFile, transcriptionConfigured } from './transcribe.js';
 import { createFetchTool, createSearchTool } from './web.js';
+import { describeImage, isImage, shouldDescribe, visionConfigured } from './vision.js';
 import { fetchWithRetry } from './retry.js';
 import { formatContext, formatUsage, summarizeUsage } from './usage.js';
 import { resolveBashTool, workspaceJailExtension } from './jail.js';
@@ -142,6 +143,7 @@ export class ConversationAgent {
           web: { fetch: webFetch, search: webSearch },
           imageGen: Boolean(this.config.imageGen?.enabled !== false),
           memory,
+          imagesDescribed: visionConfigured(this.config.vision),
         }),
         ...(extraSystemPrompt ? [extraSystemPrompt] : []),
       ],
@@ -330,6 +332,7 @@ export class ConversationAgent {
       await this.transcribeBatch(envelopes);
 
       const session = await this.ensureSession();
+      await this.describeImages(session, envelopes);
       await this.maybeCompact(session);
       const prompt = buildTurnPrompt(envelopes);
       const started = Date.now();
@@ -416,6 +419,44 @@ export class ConversationAgent {
       } catch (err) {
         envelope.media = { ...media, transcriptError: err.message };
         this.log.warn(`[${this.slug}] transcription failed: ${err.message}`);
+      }
+    }
+  }
+
+  // The chat model may be text-only. Describe inbound images with the
+  // configured vision model before the turn, so the prompt carries text the
+  // model can actually use. Runs per conversation (like transcription) so a
+  // slow vision call does not hold up the inbox claim chain.
+  async describeImages(session, envelopes) {
+    const vision = this.config.vision;
+    if (!visionConfigured(vision)) return;
+    if (!shouldDescribe({ vision, model: session?.model })) return;
+
+    for (const envelope of envelopes) {
+      const media = envelope.media;
+      if (!media?.localPath || media.error) continue;
+      if (!isImage(media)) continue;
+      if (media.description || media.descriptionError) continue;
+
+      try {
+        const { text, model } = await describeImage({
+          vision,
+          filePath: media.localPath,
+          media,
+          log: this.log,
+        });
+        envelope.media = { ...media, description: text, descriptionModel: model };
+        if (vision.writeSidecar !== false) {
+          await fs
+            .writeFile(`${media.localPath}.description.txt`, `${text}\n`)
+            .catch((err) =>
+              this.log.warn(`[${this.slug}] description sidecar failed: ${err.message}`),
+            );
+        }
+        this.log.info(`[${this.slug}] described ${path.basename(media.localPath)} (${model})`);
+      } catch (err) {
+        envelope.media = { ...media, descriptionError: err.message };
+        this.log.warn(`[${this.slug}] image description failed: ${err.message}`);
       }
     }
   }

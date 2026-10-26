@@ -314,6 +314,7 @@ const TABS = [
   { id: 'chat', label: 'Mensagens' },
   { id: 'session', label: 'Sessão' },
   { id: 'config', label: 'Configuração' },
+  { id: 'vision', label: 'Visão' },
   { id: 'prompt', label: 'System prompt' },
   { id: 'workspace', label: 'Workspace' },
 ];
@@ -332,6 +333,7 @@ async function renderConversation(slug, tab) {
     chat: renderConvChat,
     session: renderConvSession,
     config: renderConvConfig,
+    vision: renderConvVision,
     prompt: renderConvPrompt,
     workspace: renderConvWorkspace,
   };
@@ -365,6 +367,10 @@ async function renderConvOverview(conv, settings) {
         <div class="row"><span class="k">thinking</span><span class="v">${esc(effective.thinkingLevel ?? '—')}</span></div>
         <div class="row"><span class="k">autoReply</span><span class="v">${effective.autoReply !== false}</span></div>
         <div class="row"><span class="k">timeout</span><span class="v">${effective.turnTimeoutMs ?? '—'} ms</span></div>`,
+    },
+    {
+      title: 'Visão (imagens recebidas)',
+      body: visionCardBody(effective.vision, settings.instance.vision),
     },
   ];
 
@@ -725,6 +731,155 @@ async function ensureModels() {
 }
 
 
+
+/* ---------- vision ---------- */
+
+function visionCardBody(vision, instanceVision) {
+  const v = vision ?? {};
+  const configured = v.mode !== 'off' && v.enabled !== false && (v.command || v.model || v.modelProvider);
+  if (!configured) {
+    return `<div class="big" style="font-size:15px">desativado</div>
+      <div class="hint">Configure um modelo na aba Visão para descrever imagens quando o modelo do chat não aceita imagem.</div>`;
+  }
+  return `
+    <div class="big" style="font-size:15px">${esc(v.command ? 'command' : `${v.modelProvider ?? '?'}/${v.model ?? '?'}`)}</div>
+    <div class="row"><span class="k">modo</span><span class="v">${esc(v.mode ?? 'auto')}</span></div>
+    <div class="row"><span class="k">origem</span><span class="v">${instanceVision && (instanceVision.model || instanceVision.command) ? 'instância' : 'conversa'}</span></div>
+    <div class="hint">No modo auto a imagem só é descrita quando o modelo ativo não aceita imagem.</div>`;
+}
+
+async function renderConvVision(conv, settings) {
+  const { models } = await ensureModels();
+  const instance = settings.instance.vision ?? {};
+  const override = settings.overrides.vision ?? {};
+  const effective = settings.effective.vision ?? {};
+  const opt = (value, label, current) =>
+    `<option value="${esc(value)}" ${String(current) === String(value) ? 'selected' : ''}>${esc(label)}</option>`;
+
+  const tri = (key, label, inherited) =>
+    `<select data-vkey="${key}" data-vtype="bool">
+      <option value="" ${override[key] === undefined ? 'selected' : ''}>(herdar: ${inherited === false ? 'não' : 'sim'})</option>
+      ${opt('true', 'sim', override[key])}
+      ${opt('false', 'não', override[key])}
+    </select>`;
+
+  content.innerHTML = `
+    <div class="card" style="margin-bottom:16px">
+      <h3>Fallback de imagens</h3>
+      <div class="hint" style="margin-bottom:12px">
+        O modelo do chat pode ser só texto. Quando uma imagem chega, o wabox-pi a descreve
+        com o modelo abaixo e coloca a descrição no prompt do turno. Campos vazios herdam a
+        configuração da instância (mostrada como placeholder).
+      </div>
+      <datalist id="vision-model-options">
+        ${models.map((model) => `<option value="${esc(model.id)}">${esc(model.provider)} · ${esc(model.name)}</option>`).join('')}
+      </datalist>
+      <form id="visionForm">
+        <div class="field">
+          <label>Ativado</label>
+          ${tri('enabled', 'Ativado', instance.enabled)}
+        </div>
+        <div class="field">
+          <label>Modo</label>
+          <select data-vkey="mode" data-vtype="text">
+            <option value="" ${override.mode === undefined ? 'selected' : ''}>(herdar: ${esc(instance.mode ?? 'auto')})</option>
+            ${opt('auto', 'auto — só quando o modelo não vê imagens', override.mode)}
+            ${opt('always', 'always — sempre descrever', override.mode)}
+            ${opt('off', 'off — nunca descrever', override.mode)}
+          </select>
+        </div>
+        <div class="two-col">
+          <div class="field">
+            <label>Provider do modelo de visão</label>
+            <input data-vkey="modelProvider" data-vtype="text" value="${esc(override.modelProvider ?? '')}"
+              placeholder="${esc(instance.modelProvider ?? 'ex.: openrouter')}" autocomplete="off">
+          </div>
+          <div class="field">
+            <label>Modelo de visão</label>
+            <input data-vkey="model" data-vtype="text" list="vision-model-options" value="${esc(override.model ?? '')}"
+              placeholder="${esc(instance.model ?? 'ex.: google/gemini-2.5-flash')}" autocomplete="off">
+          </div>
+        </div>
+        <div class="field">
+          <label>Instrução para o modelo de visão</label>
+          <textarea data-vkey="prompt" data-vtype="text" placeholder="${esc(instance.prompt ?? 'padrão: descrever texto, layout, objetos, números e erros')}">${esc(override.prompt ?? '')}</textarea>
+        </div>
+        <div class="two-col">
+          <div class="field">
+            <label>maxTokens</label>
+            <input type="number" min="1" data-vkey="maxTokens" data-vtype="int" value="${override.maxTokens ?? ''}"
+              placeholder="${esc(instance.maxTokens ?? 1024)}">
+          </div>
+          <div class="field">
+            <label>timeoutMs</label>
+            <input type="number" min="1000" data-vkey="timeoutMs" data-vtype="int" value="${override.timeoutMs ?? ''}"
+              placeholder="${esc(instance.timeoutMs ?? 120000)}">
+          </div>
+        </div>
+        <div class="field">
+          <label>maxBytes da imagem</label>
+          <input type="number" min="1000" data-vkey="maxBytes" data-vtype="int" value="${override.maxBytes ?? ''}"
+            placeholder="${esc(instance.maxBytes ?? 8000000)}">
+        </div>
+        <div class="field">
+          <label>Command local (opcional — recebe o caminho da imagem, stdout é a descrição)</label>
+          <input data-vkey="command" data-vtype="text" value="${esc(override.command ?? '')}"
+            placeholder="${esc(instance.command ?? '')}" autocomplete="off">
+        </div>
+        <div class="field">
+          <label>Salvar sidecar .description.txt ao lado da mídia</label>
+          ${tri('writeSidecar', 'sidecar', instance.writeSidecar)}
+        </div>
+        <div class="actions">
+          <button class="btn primary" type="submit">Salvar visão</button>
+          <button class="btn danger" type="button" id="clearVision">Remover override de visão</button>
+        </div>
+        <div class="hint" style="margin-top:8px">
+          Efetivo agora: ${esc(effective.command ? `command ${effective.command}` : effective.model ? `${effective.modelProvider ?? '?'}/${effective.model}` : 'não configurado')}
+          · modo ${esc(effective.mode ?? 'auto')}
+          · modelProvider/model pode ficar vazio quando há um command.
+        </div>
+      </form>
+    </div>`;
+
+  $('#visionForm').onsubmit = async (event) => {
+    event.preventDefault();
+    const vision = {};
+    for (const el of document.querySelectorAll('#visionForm [data-vkey]')) {
+      const key = el.dataset.vkey;
+      const type = el.dataset.vtype;
+      const raw = el.value;
+      if (raw === '') continue;
+      if (type === 'bool') vision[key] = raw === 'true';
+      else if (type === 'int') vision[key] = Number.parseInt(raw, 10);
+      else vision[key] = raw;
+    }
+    try {
+      await api(`/conversations/${encodeURIComponent(conv.slug)}/settings`, {
+        method: 'PUT',
+        body: JSON.stringify({ vision: Object.keys(vision).length ? vision : null }),
+      });
+      toast('Configuração de visão salva.');
+      await render();
+    } catch (err) {
+      fail(err);
+    }
+  };
+
+  $('#clearVision').onclick = async () => {
+    if (!confirm('Remover o override de visão desta conversa? Volta a herdar a instância.')) return;
+    try {
+      await api(`/conversations/${encodeURIComponent(conv.slug)}/settings`, {
+        method: 'PUT',
+        body: JSON.stringify({ vision: null }),
+      });
+      toast('Override removido.');
+      await render();
+    } catch (err) {
+      fail(err);
+    }
+  };
+}
 
 /* ---------- system prompt ---------- */
 

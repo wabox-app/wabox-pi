@@ -7,7 +7,12 @@
 
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { CONVERSATION_KEYS, configFilePath, conversationConfig } from './config.js';
+import {
+  CONVERSATION_KEYS,
+  configFilePath,
+  conversationConfig,
+  normalizeVision,
+} from './config.js';
 import { conversationPaths, readIdentity } from './workspace.js';
 import { normalizeTasks } from './schedule.js';
 import { nextCronDate } from './cron.js';
@@ -80,6 +85,7 @@ const EDITABLE = {
   batchWindowMs: 'int',
   workspaceTemplate: 'string',
   imageGen: 'object',
+  vision: 'object',
 };
 
 // Instance-level keys echoed to the UI so the operator can see what a
@@ -115,6 +121,7 @@ const INSTANCE_VIEW = [
   'sandboxAllowRead',
   'workspaceTemplate',
   'imageGen',
+  'vision',
   'logLevel',
   'timezone',
   'threads',
@@ -197,6 +204,7 @@ function redact(value) {
     clone.web?.fetch,
     clone.web?.search,
     clone.imageGen,
+    clone.vision,
     clone.router,
   ]) {
     if (!obj || typeof obj !== 'object') continue;
@@ -520,6 +528,10 @@ export function createApi({ config, log, control = null }) {
 
     // `vision` is nested: normalize it here so a bad hand-written value cannot
     // reach the daemon, and store an empty object as "no override".
+    if (overrides.vision !== undefined && overrides.vision !== null) {
+      const vision = normalizeVision(overrides.vision);
+      overrides.vision = vision && Object.keys(vision).length ? vision : null;
+    }
 
     const conversations = raw.conversations && typeof raw.conversations === 'object'
       ? raw.conversations

@@ -82,3 +82,24 @@ test('batches several envelopes into one prompt', () => {
   assert.match(prompt, /first/);
   assert.match(prompt, /second/);
 });
+
+test('renders an image description and a description failure', () => {
+  const described = buildTurnPrompt([
+    {
+      ...base,
+      media: {
+        type: 'image',
+        localPath: '/m/photo.jpg',
+        description: 'A whiteboard with the word deadlines.',
+        descriptionModel: 'openrouter/google/gemini-flash',
+      },
+    },
+  ]);
+  assert.match(described, /Image description \(openrouter\/google\/gemini-flash\):/);
+  assert.match(described, /A whiteboard with the word deadlines\./);
+
+  const failed = buildTurnPrompt([
+    { ...base, media: { type: 'image', localPath: '/m/photo.jpg', descriptionError: 'timeout' } },
+  ]);
+  assert.match(failed, /Image description failed: timeout/);
+});

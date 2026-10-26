@@ -48,6 +48,28 @@ function list(value, fallback) {
   return fallback;
 }
 
+// Inbound-image descriptions (see src/vision.js). `mode: auto` describes only
+// when the chat model cannot read images; `always` describes regardless.
+export function normalizeVision(value) {
+  if (!value || typeof value !== 'object') return null;
+  const out = {};
+  if (value.enabled !== undefined) out.enabled = bool(value.enabled, true);
+  if (value.mode !== undefined) {
+    const mode = String(value.mode).toLowerCase();
+    out.mode = ['auto', 'always', 'off'].includes(mode) ? mode : 'auto';
+  }
+  if (value.command !== undefined) out.command = String(value.command) || null;
+  if (value.modelProvider !== undefined) out.modelProvider = String(value.modelProvider) || null;
+  if (value.model !== undefined) out.model = String(value.model) || null;
+  if (value.prompt !== undefined) out.prompt = String(value.prompt) || null;
+  if (value.apiKey !== undefined) out.apiKey = String(value.apiKey) || null;
+  if (value.maxBytes !== undefined) out.maxBytes = int(value.maxBytes, 8_000_000, { min: 1_000 });
+  if (value.maxTokens !== undefined) out.maxTokens = int(value.maxTokens, 1024, { min: 1 });
+  if (value.timeoutMs !== undefined) out.timeoutMs = int(value.timeoutMs, 120_000, { min: 1_000 });
+  if (value.writeSidecar !== undefined) out.writeSidecar = bool(value.writeSidecar, true);
+  return out;
+}
+
 function normalizeImageGen(value, base) {
   if (!value || typeof value !== 'object') return null;
   const out = {};
@@ -101,6 +123,7 @@ export const CONVERSATION_KEYS = [
   'batchWindowMs',
   'workspaceTemplate',
   'imageGen',
+  'vision',
 ];
 
 function normalizeConversation(override, base) {
@@ -145,6 +168,9 @@ function normalizeConversation(override, base) {
   if (override.imageGen !== undefined) {
     out.imageGen = override.imageGen === null ? null : normalizeImageGen(override.imageGen, base);
   }
+  if (override.vision !== undefined) {
+    out.vision = override.vision === null ? null : normalizeVision(override.vision);
+  }
   return out;
 }
 
@@ -164,6 +190,14 @@ export function conversationConfig(config, slug) {
     }
   }
   if (workspace) merged.workspace = workspace;
+  // `vision` is a small nested block: a per-chat override usually sets one field
+  // (the mode, or a different model) and should keep inheriting the rest.
+  if (override?.vision !== undefined) {
+    merged.vision =
+      override.vision && typeof override.vision === 'object'
+        ? { ...(config.vision ?? {}), ...override.vision }
+        : config.vision;
+  }
   return merged;
 }
 
@@ -325,6 +359,17 @@ export function loadConfig({ cwd = process.cwd() } = {}) {
 
     // Image generation via OpenRouter (see src/generate_image.js).
     imageGen: normalizeImageGen(file?.imageGen, base),
+
+    // Inbound images described by a separate vision model when the chat model
+    // cannot read them (see src/vision.js). `enabled` is not derived here: a
+    // conversation may supply the backend, and an inherited `enabled: false`
+    // would silently disable it. `visionConfigured()` decides from the merged
+    // block instead.
+    vision: (() => {
+      const vision = normalizeVision(file?.vision) ?? {};
+      if (vision.mode === undefined) vision.mode = 'auto';
+      return vision;
+    })(),
 
     // Keep the agent inside its conversation workspace. `jail` path-jails the
     // file tools; `sandboxBash` decides how bash is contained:

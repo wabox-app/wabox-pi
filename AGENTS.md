@@ -34,6 +34,7 @@ the pi SDK, `chokidar`, and `typebox`.
 | `src/workspace.js` | Per-conversation dirs; seeds `AGENTS.md` once. |
 | `src/jail.js` | Path-jail file tools; bubblewrap-sandbox `bash`. |
 | `src/transcribe.js` | Inbound-audio transcription (command, OpenAI API, or OpenRouter chat). |
+| `src/vision.js` | Inbound-image descriptions when the chat model is text-only (pi vision model or command). |
 | `src/web.js` | `wabox_fetch` / `wabox_search` tools (SSRF-guarded, run in-process). |
 | `src/generate_image.js` | `wabox_generate_image` tool (OpenRouter/Pollinations, run in-process). |
 | `src/cron.js` | Time-zone-aware 5-field cron parsing + next-run search (pure). |
@@ -110,6 +111,11 @@ the pi SDK, `chokidar`, and `typebox`.
   that resolve outside the workspace (plus the conversation's `media/`) via a
   pi `tool_call` handler, and wraps `bash` in bubblewrap. `workspaceOverrides`
   redirects `cwd`; it must not defeat the jail's read roots.
+- **Images survive a text-only model.** `vision.mode: auto` describes an inbound
+  image only when the active model lacks `image` in `model.input`; `always`
+  describes regardless. The description goes into the prompt like a transcript
+  (and a `.description.txt` sidecar), and the agent is told not to guess when it
+  is missing. `vision` is the one merged (not replaced) per-conversation block.
 - **Inbound attachments are readable, not writable.** The conversation's
   `media/` folder is a read root for the file tools and is ro-bound in the bash
   sandbox, so the agent can read an attachment and copy it into the workspace.

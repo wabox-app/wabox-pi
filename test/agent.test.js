@@ -102,3 +102,62 @@ test('a small context is left alone', async () => {
   assert.equal(compacted, false);
   await fs.rm(dir, { recursive: true, force: true });
 });
+
+async function imageAgentFixture(vision) {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'wabox-agent-vision-'));
+  const media = path.join(dir, 'media');
+  await fs.mkdir(media, { recursive: true });
+  const file = path.join(media, 'photo.jpg');
+  await fs.writeFile(file, 'fake-image');
+  const script = path.join(dir, 'describe.sh');
+  await fs.writeFile(script, `#!/bin/sh\necho "descrição de $1"\n`, { mode: 0o755 });
+
+  const config = {
+    vision: { command: `'${script}'`, mode: 'auto', ...vision },
+  };
+  const agent = new ConversationAgent({
+    config,
+    log: silent,
+    slug: 'slug',
+    paths: { workspace: path.join(dir, 'ws'), sessions: path.join(dir, 's'), media },
+  });
+  return { dir, file, agent, cleanup: () => fs.rm(dir, { recursive: true, force: true }) };
+}
+
+test('describeImages fills a description for a text-only model and writes a sidecar', async () => {
+  const { file, agent, cleanup } = await imageAgentFixture();
+  try {
+    const envelope = { media: { type: 'image', localPath: file, mimetype: 'image/jpeg' } };
+    await agent.describeImages({ model: { input: ['text'] } }, [envelope]);
+
+    assert.match(envelope.media.description, /descrição de/);
+    assert.equal(envelope.media.descriptionModel, 'command');
+    const sidecar = await fs.readFile(`${file}.description.txt`, 'utf8');
+    assert.match(sidecar, /descrição de/);
+  } finally {
+    await cleanup();
+  }
+});
+
+test('describeImages leaves an image-capable model alone in auto mode', async () => {
+  const { file, agent, cleanup } = await imageAgentFixture();
+  try {
+    const envelope = { media: { type: 'image', localPath: file } };
+    await agent.describeImages({ model: { input: ['text', 'image'] } }, [envelope]);
+    assert.equal(envelope.media.description, undefined);
+    await assert.rejects(() => fs.stat(`${file}.description.txt`), /ENOENT/);
+  } finally {
+    await cleanup();
+  }
+});
+
+test('describeImages records a failure without throwing', async () => {
+  const { file, agent, cleanup } = await imageAgentFixture({ command: 'false' });
+  try {
+    const envelope = { media: { type: 'image', localPath: file } };
+    await agent.describeImages({ model: { input: ['text'] } }, [envelope]);
+    assert.match(envelope.media.descriptionError, /vision command exited/);
+  } finally {
+    await cleanup();
+  }
+});

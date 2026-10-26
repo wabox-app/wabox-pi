@@ -397,3 +397,29 @@ test('rejects slugs that are not safe filenames', async () => {
     await cleanup();
   }
 });
+
+test('vision overrides are normalized and empty ones removed', async () => {
+  const { config, api, cleanup } = await fixture();
+  try {
+    await makeConversation(config, 'a-1');
+    config.vision = { modelProvider: 'openrouter', model: 'gemini', mode: 'auto', enabled: true };
+
+    await api.saveSettings('a-1', {
+      vision: { mode: 'always', maxTokens: '512' },
+    });
+    let raw = JSON.parse(await fs.readFile(config.configFilePath, 'utf8'));
+    assert.deepEqual(raw.conversations['a-1'].vision, { mode: 'always', maxTokens: 512 });
+
+    // The per-chat block composes with the instance one.
+    const settings = await api.getSettings('a-1');
+    assert.equal(settings.effective.vision.model, 'gemini');
+    assert.equal(settings.effective.vision.mode, 'always');
+
+    // An empty object is dropped instead of disabling the inherited block.
+    await api.saveSettings('a-1', { vision: {} });
+    raw = JSON.parse(await fs.readFile(config.configFilePath, 'utf8'));
+    assert.equal(raw.conversations, undefined);
+  } finally {
+    await cleanup();
+  }
+});

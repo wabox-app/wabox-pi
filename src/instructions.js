@@ -2,7 +2,7 @@
 // instructions still apply). Kept short: the per-turn prompt carries the
 // message; this carries the WhatsApp conventions.
 
-export function systemPromptAppend({ workspace, jailed = false, sandboxedBash = false, web = {}, imageGen = false, memory = null }) {
+export function systemPromptAppend({ workspace, jailed = false, sandboxedBash = false, web = {}, imageGen = false, memory = null, imagesDescribed = false }) {
   let confinement;
   if (jailed && sandboxedBash) {
     confinement = `Stay inside that directory: it is the only place you can write. The file
@@ -37,8 +37,11 @@ You are talking to a person over WhatsApp, not to a terminal user.
   prompt gives you their absolute paths. Use the read tool for images and
   documents. Voice notes are transcribed into the prompt when transcription is
   configured; if a transcript is missing or failed, say so briefly instead of
-  pretending you heard it.
-- The shell has **no network access**. For the web use ${
+  pretending you heard it.${
+  imagesDescribed
+    ? `\n- When this model cannot see images, inbound images are described by a vision\n  model and the description is in the prompt. Rely on it, and say so if the\n  description failed instead of guessing what the picture shows.`
+    : ''
+}- The shell has **no network access**. For the web use ${
     [web.fetch ? '`wabox_fetch` to read a URL' : null, web.search ? '`wabox_search` to find pages' : null]
       .filter(Boolean)
       .join(' and ') || 'the web tools when available'
