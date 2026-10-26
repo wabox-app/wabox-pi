@@ -6,6 +6,12 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- Transcription received no retrying `fetch`: `transcribeBatch` referenced a
+  fetch wrapper local to `ensureSession`, so configuring transcription threw a
+  `ReferenceError` at turn time. The wrapper now lives on the agent.
+
 ### Added
 
 - Initial harness: watches wabox-core's inbox, claims envelopes (read receipt on

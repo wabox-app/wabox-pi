@@ -57,22 +57,29 @@ export class ConversationAgent {
     };
   }
 
-  async ensureSession() {
-    if (this.session) return this.session;
-
-    const jailed = this.config.jail;
-
-    // Wrap the global fetch with retry/backoff for all external APIs.
-    const retryOptions = {
+  // One retrying fetch for every external API this agent calls (image
+  // generation, web tools, transcription). Created lazily so an agent that
+  // never leaves the process pays nothing.
+  resilientFetch() {
+    this.fetchImpl ??= fetchWithRetry(globalThis.fetch, {
       maxAttempts: this.config.apiRetryMaxAttempts,
       initialDelayMs: this.config.apiRetryInitialDelayMs,
       maxDelayMs: this.config.apiRetryMaxDelayMs,
       multiplier: this.config.apiRetryMultiplier,
       onRetry: ({ attempt, delay, error }) => {
-        this.log.warn(`[${this.slug}] API retry ${attempt}/${this.config.apiRetryMaxAttempts} in ${delay}ms: ${error.message}`);
+        this.log.warn(
+          `[${this.slug}] API retry ${attempt}/${this.config.apiRetryMaxAttempts} in ${delay}ms: ${error.message}`,
+        );
       },
-    };
-    const resilientFetch = fetchWithRetry(globalThis.fetch, retryOptions);
+    });
+    return this.fetchImpl;
+  }
+
+  async ensureSession() {
+    if (this.session) return this.session;
+
+    const jailed = this.config.jail;
+    const resilientFetch = this.resilientFetch();
 
     // Resolve bash first: in "bwrap" mode a missing bubblewrap throws here,
     // before a session is created with an unsandboxed shell.
@@ -391,7 +398,7 @@ export class ConversationAgent {
           config,
           filePath: media.localPath,
           log: this.log,
-          fetchImpl: resilientFetch,
+          fetchImpl: this.resilientFetch(),
         });
         envelope.media = { ...media, transcript: text, transcriptModel: model };
         await fs
