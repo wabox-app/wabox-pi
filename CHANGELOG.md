@@ -11,6 +11,8 @@ All notable changes to this project are documented here. The format follows
 - Transcription received no retrying `fetch`: `transcribeBatch` referenced a
   fetch wrapper local to `ensureSession`, so configuring transcription threw a
   `ReferenceError` at turn time. The wrapper now lives on the agent.
+- The WhatsApp system prompt no longer repeats the "instead of curl or wget"
+  sentence.
 
 ### Added
 

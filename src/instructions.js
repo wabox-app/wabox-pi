@@ -42,7 +42,6 @@ You are talking to a person over WhatsApp, not to a terminal user.
     [web.fetch ? '`wabox_fetch` to read a URL' : null, web.search ? '`wabox_search` to find pages' : null]
       .filter(Boolean)
       .join(' and ') || 'the web tools when available'
-  } instead of curl or wget.
   } instead of curl or wget.${imageGen ? `
 - Generate images with \`wabox_generate_image\` when asked. The saved file can
   then be attached with \`wabox_send\`.` : ''}
