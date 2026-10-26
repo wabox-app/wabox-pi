@@ -10,7 +10,8 @@ import path from 'node:path';
 import chokidar from 'chokidar';
 import { readEnvelope } from './envelope.js';
 import { conversationKey, slugFor } from './routing.js';
-import { conversationConfig } from './config.js';
+import { conversationConfig, loadConfig } from './config.js';
+import { startDashboard } from './dashboard.js';
 import { ensureConversation, readIdentity, rememberIdentity, seedWorkspace } from './workspace.js';
 import { resolveThread } from './router.js';
 import { threadAwarePaths, touchThread } from './threads.js';
@@ -291,6 +292,40 @@ export async function startDaemon(config, log) {
 
   let stopping = false;
 
+  // Dashboard control handle: the daemon owns the runners and the merged
+  // config, so the dashboard asks it to reload a conversation after a settings
+  // change instead of the next message using a stale model or workspace.
+  const control = {
+    alive: () => !stopping,
+    isRunning: (slug) => {
+      if (!slug) return runners.size > 0;
+      for (const key of runners.keys()) if (key.startsWith(`${slug}:`)) return true;
+      return false;
+    },
+    runnerCount: () => runners.size,
+    reload: async (slug) => {
+      for (const [key, runner] of runners) {
+        if (key.startsWith(`${slug}:`)) {
+          runners.delete(key);
+          await runner.dispose().catch(() => {});
+        }
+      }
+      // Re-read config.json so the next claim merges the new overrides.
+      try {
+        Object.assign(config, loadConfig());
+        scheduler.setTasks(mergedTasks());
+        log.info(`[${slug}] reloaded config after dashboard change`);
+      } catch (err) {
+        log.warn(`[${slug}] config reload failed: ${err.message}`);
+      }
+    },
+  };
+
+  const dashboard = await startDashboard({ config, log, control }).catch((err) => {
+    log.error(`dashboard failed to start: ${err.message}`);
+    return null;
+  });
+
   // Claim files one at a time, in watcher order, so two messages from the same
   // chat cannot be reordered by concurrent async claims. Agent turns still run
   // in parallel across conversations.
@@ -327,7 +362,6 @@ export async function startDaemon(config, log) {
       if (switched) {
         log.info(`[${slug}:${threadId}] context switched — running on different thread`);
       }
-
       log.info(
         `[${slug}:${threadId}] claimed ${envelope.id} from ${envelope.pushName || envelope.number || envelope.from}` +
           `${switched ? ' (switched thread)' : ''}` +
@@ -377,6 +411,7 @@ export async function startDaemon(config, log) {
     log.info(`received ${signal}, shutting down`);
     clearInterval(cleanupInterval);
     scheduler.stop();
+    await dashboard?.close().catch(() => {});
     await watcher.close().catch(() => {});
 
     // Let claims that already started finish (so no envelope is half-moved),
@@ -399,5 +434,5 @@ export async function startDaemon(config, log) {
   process.on('SIGINT', () => void shutdown('SIGINT'));
   process.on('SIGTERM', () => void shutdown('SIGTERM'));
 
-  return { watcher, runners, scheduler, shutdown, done };
+  return { watcher, runners, scheduler, dashboard, control, shutdown, done };
 }

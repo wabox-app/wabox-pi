@@ -29,7 +29,7 @@
     "start": "node bin/wabox-pi.js run",
     "dev": "node --watch bin/wabox-pi.js run",
     "test": "node --test",
-    "check": "node --check bin/wabox-pi.js && node --check src/*.js"
+    "check": "node --check bin/wabox-pi.js && node --check src/*.js && node --check src/webui/app.js"
   },
   "dependencies": {
     "@earendil-works/pi-coding-agent": "^1.3.0",

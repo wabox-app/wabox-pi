@@ -18,7 +18,7 @@ the pi SDK, `chokidar`, and `typebox`.
 | Path | Responsibility |
 | --- | --- |
 | `bin/wabox-pi.js` | Entrypoint; delegates to `src/cli.js`. |
-| `src/cli.js` | `run` / `status` / `version` / `help`. |
+| `src/cli.js` | `run` / `dashboard` / `status` / `version` / `help`. |
 | `src/config.js` | env > `config.json` > defaults; per-slug overrides; state paths; chat model. |
 | `src/wabox-paths.js` | Asks `wabox status` for the inbox/outbox (fallback: XDG). |
 | `src/daemon.js` | Inbox watcher, envelope claiming, per-chat queue runners, task firing. |
@@ -28,6 +28,9 @@ the pi SDK, `chokidar`, and `typebox`.
 | `src/outbox.js` | Atomic job writer + reply/reaction job builders. |
 | `src/prompt.js` | Inbox envelope → per-turn prompt (pure). |
 | `src/instructions.js` | WhatsApp-etiquette section appended to pi's system prompt. |
+| `src/api.js` | Dashboard data layer: conversations, settings, transcripts, workspace files (pure over the state dir). |
+| `src/dashboard.js` | Dashboard HTTP server (JSON API + static SPA), loopback by default. |
+| `src/webui/` | The dashboard SPA (`index.html`, `app.js`, `styles.css`). No build step. |
 | `src/workspace.js` | Per-conversation dirs; seeds `AGENTS.md` once. |
 | `src/jail.js` | Path-jail file tools; bubblewrap-sandbox `bash`. |
 | `src/transcribe.js` | Inbound-audio transcription (command, OpenAI API, or OpenRouter chat). |
@@ -44,6 +47,30 @@ the pi SDK, `chokidar`, and `typebox`.
 | `src/lock.js` | Single-instance PID lock. |
 | `src/logger.js` | stderr + state-dir log, no dependencies. |
 | `templates/workspace-AGENTS.md` | Seeded into each new conversation workspace. |
+
+## Dashboard
+
+- It is an **observer plus a config editor**, never a second daemon: it does not
+  touch `inbox/` or `outbox/` and it never opens a WhatsApp connection.
+- Mutations are limited to `config.json` (per-slug overrides, atomic temp file +
+  rename), a conversation's session `.jsonl` files (`/new` only), and files
+  inside that conversation's workspace (path-jailed, like the agent's tools).
+- `src/api.js` validates writes against `EDITABLE` (a subset of
+  `CONVERSATION_KEYS`); unknown keys are a 400, not silently dropped. `null`
+  removes an override so the conversation inherits the instance value again.
+- When started by the daemon it receives a `control` handle
+  (`alive`/`isRunning`/`runnerCount`/`reload`). After a settings write it calls
+  `reload(slug)`, which disposes that chat's runners and re-runs `loadConfig()`,
+  so the next message uses the new model/prompt without a restart.
+- Secrets are redacted in API responses (`apiKey`, `apiKeyFile`, …). The bind
+  address defaults to loopback; any other host refuses to start without
+  `WABOX_PI_DASHBOARD_TOKEN`, and then every API call needs the bearer token.
+- The SPA reads `SYSTEM.md`/`AGENTS.md`/`MEMORY.md` from the workspace. The
+  system prompt is layered: pi base → `src/instructions.js` → inline
+  `conversations.<slug>.systemPrompt` → workspace `SYSTEM.md`.
+- `dashboardPort: 0` disables it; `run --dashboard` and `wabox-pi dashboard`
+  default to 7345. An explicitly passed `port` (even 0) always starts it, which
+  is what the tests use for an ephemeral port.
 
 ## Invariants
 
@@ -79,8 +106,7 @@ the pi SDK, `chokidar`, and `typebox`.
   `media/` folder so the agent has a stable path and the audit trail survives.
 - **State is per conversation.** Sessions, workspace, media, and processed
   envelopes live under `conversations/<slug>/`; `/new` only clears that chat's
-  session files.
-- **The agent stays in its workspace.** `src/jail.js` blocks file-tool paths
+  session files.- **The agent stays in its workspace.** `src/jail.js` blocks file-tool paths
   that resolve outside the workspace (plus the conversation's `media/`) via a
   pi `tool_call` handler, and wraps `bash` in bubblewrap. `workspaceOverrides`
   redirects `cwd`; it must not defeat the jail's read roots.

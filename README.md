@@ -55,6 +55,52 @@ wabox's inbox; wabox-pi claims each one, runs the agent, and writes the reply to
 the outbox. Claiming removes the envelope from `inbox/`, which is also what
 triggers the WhatsApp read receipt.
 
+### Dashboard
+
+A small web UI for inspecting and tuning conversations. It reads the same state
+the daemon writes and edits only `config.json`, a chat's session files, and its
+workspace.
+
+```bash
+wabox-pi run --dashboard          # daemon + UI on http://127.0.0.1:7345
+wabox-pi dashboard                # UI only (inspect state, edit config)
+
+# or pin it in config.json / env
+# { "dashboardPort": 7345, "dashboardHost": "127.0.0.1" }
+WABOX_PI_DASHBOARD_PORT=7345 wabox-pi run
+```
+
+What it exposes per conversation:
+
+- **Overview** — identity (JID, number), session/message/file counts, effective
+  model, quick actions (reload or clear the session).
+- **Mensagens** — the processed inbox envelopes, verbatim.
+- **Sessão** — the pi session transcript: user turns, assistant text, thinking,
+  tool calls and results, token usage, and per-message errors.
+- **Configuração** — the per-conversation overrides (model, thinking, timeouts,
+  tools, jail/sandbox, auto-reply, …). Empty fields inherit the instance value
+  (shown as a placeholder); saving rewrites `conversations.<slug>` in
+  `config.json` and asks the daemon to reload that chat.
+- **System prompt** — two layers: an inline `systemPrompt` override in
+  `config.json` and the workspace's `SYSTEM.md`, appended to pi's prompt after
+  the WhatsApp etiquette rules. Both are read when a session is created.
+- **Workspace** — browse and edit the files the agent works with (`AGENTS.md`,
+  `MEMORY.md`, generated documents). Writes stay inside the workspace.
+
+Global views show daemon status, the scheduled jobs (config + chat-created),
+and a live tail of `wabox-pi.log`.
+
+Notes:
+
+- Settings changes restart the chat's in-memory session; the next message uses
+  the new model/prompt and resumes the same history. "Clear session" deletes
+  the `.jsonl` files instead.
+- The server binds to `127.0.0.1` by default. Binding to any other address
+  requires `WABOX_PI_DASHBOARD_TOKEN`; requests must then send
+  `Authorization: Bearer <token>`.
+- A standalone `wabox-pi dashboard` cannot reload the daemon's live sessions:
+  settings apply on the daemon's next session/restart.
+
 ### Configuration
 
 Settings resolve as **environment > `config.json` > defaults**. The config file
@@ -143,6 +189,8 @@ lives at `${XDG_CONFIG_HOME:-~/.config}/wabox-pi/config.json`:
 | `contextCompactRatio` | `WABOX_PI_CONTEXT_COMPACT_RATIO` | `0.5` | compact the session past this share of the model's window |
 | `contextCompactWarnTokens` | `WABOX_PI_CONTEXT_WARN_TOKENS` | `120000` | warn in the log past this many context tokens |
 | `logLevel` | `WABOX_PI_LOG_LEVEL` | `info` | `debug`, `info`, `warn`, `error` |
+| `dashboardPort` | `WABOX_PI_DASHBOARD_PORT` | `0` (off) | dashboard HTTP port |
+| `dashboardHost` | `WABOX_PI_DASHBOARD_HOST` | `127.0.0.1` | dashboard bind address |
 
 #### Per-conversation overrides
 
@@ -171,13 +219,18 @@ a single chat, keyed by the conversation slug (the folder name under
 }
 ```
 
-Overridable keys: `workspace`, `modelProvider`, `model`, `thinkingLevel`, `jail`,
-`sandboxBash`, `sandboxNetwork`, `sandboxDenyRead`, `sandboxAllowRead`,
-`sandboxBashBin`, `tools`, `excludeTools`, `autoReply`, `errorReply`, `ackReact`,
-`batchWindowMs`, `workspaceTemplate`. Values replace the instance value (lists
-are not merged); relative paths resolve against the config file. A per-slug
-value wins over the environment variable for that conversation.
-`groupPerParticipant` is instance-wide because it changes the slug itself.
+Overridable keys: `workspace`, `modelProvider`, `model`, `thinkingLevel`,
+`systemPrompt`, `jail`, `sandboxBash`, `sandboxNetwork`, `sandboxDenyRead`,
+`sandboxAllowRead`, `sandboxBashBin`, `tools`, `excludeTools`, `autoReply`,
+`errorReply`, `ackReact`, `batchWindowMs`, `workspaceTemplate`. Values replace
+the instance value (lists are not merged); relative paths resolve against the
+config file. A per-slug value wins over the environment variable for that
+conversation. `groupPerParticipant` is instance-wide because it changes the
+slug itself.
+
+`systemPrompt` is an inline text appended to the system prompt for that
+conversation. The workspace's `SYSTEM.md`, when present, is appended after it.
+Both are read once per session (use the dashboard or `/new` to rebuild).
 
 The chat model is `modelProvider` + `model`. `model` is a model id (or
 `provider/id`); the pair is resolved against pi's model catalog, so any model
@@ -192,71 +245,6 @@ only the harness working directory (`cwd`) is redirected.
 
 Without `inboxDir`/`outboxDir`, `wabox-pi` asks `wabox status` (and
 `wabox status --json` on newer cores) before falling back to XDG defaults.
-
-#### Audio transcription
-
-pi's model input is text and images only, so a voice note cannot be handed to
-the agent directly. wabox-pi transcribes it first and puts the transcript in the
-turn prompt (and a `<file>.txt` sidecar next to the media). Pick one backend.
-
-The default is **OpenRouter**, which needs no extra key when you already signed
-in to pi: the stored provider credential is reused (an `openrouter` model that
-accepts audio, sent as an `input_audio` part).
-
-```json
-{
-  "transcription": {
-    "provider": "openrouter",
-    "model": "google/gemini-3.1-flash-lite",
-    "language": "pt"
-  }
-}
-```
-
-An OpenAI-compatible transcription endpoint (OpenAI, Groq, …):
-
-```json
-{
-  "transcription": {
-    "provider": "openai",
-    "baseUrl": "https://api.groq.com/openai/v1/audio/transcriptions",
-    "model": "whisper-large-v3",
-    "apiKeyFile": "stt.key"
-  }
-}
-```
-
-A local command (same contract as `wabox-bot`; the ready-made plugins work):
-
-```json
-{
-  "transcription": {
-    "command": "~/.local/share/wabox-bot/plugins/faster-whisper/transcribe.sh"
-  }
-}
-```
-
-| Key | Env | Meaning |
-| --- | --- | --- |
-| `enabled` | `WABOX_PI_TRANSCRIBE_*` | default `true` once a backend is set |
-| `provider` | `WABOX_PI_TRANSCRIBE_PROVIDER` | `openrouter` (chat + `input_audio`) or `openai` (`/audio/transcriptions`); inferred from `baseUrl`/`command` otherwise |
-| `baseUrl` | `WABOX_PI_TRANSCRIBE_URL` | endpoint; defaults to OpenRouter chat when `provider: openrouter` |
-| `model` | `WABOX_PI_TRANSCRIBE_MODEL` | STT/audio model (`google/gemini-3.1-flash-lite`, `whisper-large-v3`, …) |
-| `apiKey` / `apiKeyEnv` / `apiKeyFile` | `WABOX_PI_TRANSCRIBE_KEY` | secret resolution, in that order; falls back to pi's stored credential for the provider |
-| `piProvider` | — | provider id to read from pi's `auth.json` (defaults to `openrouter`) |
-| `usePiAuth` | — | default `true`; set `false` to ignore pi's stored credential |
-| `language` | `WABOX_PI_TRANSCRIBE_LANG` | ISO code; empty ⇒ auto-detect |
-| `prompt` | — | optional hint passed to the audio model |
-| `timeoutMs` | — | default `120000` |
-| `command` | `WABOX_PI_TRANSCRIBE_CMD` | shell command; the audio path is appended (or `{file}` substituted); stdout is the transcript |
-
-OGG/Opus voice notes are sent as-is for `openrouter`; other containers are
-transcoded to mp3 with `ffmpeg` first.
-
-Only inbound `audio/*` media (voice notes) is transcribed. If transcription is
-disabled or fails, the prompt says so and the agent is told not to pretend it
-heard the audio. Transcription runs in the daemon process, so the bash sandbox's
-network setting does not affect it.
 
 #### Web access
 
@@ -530,9 +518,10 @@ printf '%s' '{"id":"X1","from":"5511999998888@s.whatsapp.net","number":"55119999
 
 ## Roadmap
 
-- Per-conversation model/thinking overrides (`/model`).
 - Approval over WhatsApp for sensitive tool calls (currently tools run
   unattended; restrict `tools` for untrusted chats).
+- Authenticated multi-user dashboard (the current UI assumes a trusted local
+  operator).
 - Catch-up for scheduled tasks that were due while the daemon was down.
 - Idle-session eviction for installations with many conversations.
 - Audio transcription hook (inbound voice notes).

@@ -79,6 +79,17 @@ export function readMemory(workspace) {
   }
 }
 
+// Per-conversation system prompt. Like MEMORY.md, the file is optional and the
+// operator (or the dashboard) owns it. Synchronous for the same reason.
+export function readSystemPrompt(workspace) {
+  const file = path.join(workspace, 'SYSTEM.md');
+  try {
+    return fsSync.readFileSync(file, 'utf8').trim() || null;
+  } catch {
+    return null;
+  }
+}
+
 // Seed instructions once. The user (or the agent) owns the file after that;
 // never overwrite it.
 export async function seedWorkspace(config, paths, log) {

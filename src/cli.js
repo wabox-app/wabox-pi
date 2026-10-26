@@ -1,6 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { loadConfig } from './config.js';
+import { startDashboard } from './dashboard.js';
 import { createLogger } from './logger.js';
 import { acquireLock } from './lock.js';
 import { startDaemon } from './daemon.js';
@@ -24,6 +25,8 @@ function usage() {
 
 Usage:
   ${APP} run            Run the harness (default)
+  ${APP} run --dashboard  Run the harness plus the management dashboard
+  ${APP} dashboard      Serve the dashboard (reads state; no WhatsApp loop)
   ${APP} status         Show resolved paths and local state
   ${APP} status --json  Same, machine-readable
   ${APP} version        Print the version
@@ -45,6 +48,9 @@ Environment:
   WABOX_PI_TOOLS                   comma-separated pi tool allowlist
   WABOX_PI_TIMEZONE                default IANA zone for scheduled tasks
   WABOX_PI_SANDBOX_BASH            off | auto | bwrap (required)
+  WABOX_PI_DASHBOARD_HOST          dashboard bind address (default 127.0.0.1)
+  WABOX_PI_DASHBOARD_PORT          dashboard port (0/empty disables it)
+  WABOX_PI_DASHBOARD_TOKEN         bearer token, required off-loopback
 `);
 }
 
@@ -90,6 +96,13 @@ async function status(asJson) {
       sessions: conversationsDir,
       config: config.configFile,
     },
+    dashboard: config.dashboardPort
+      ? {
+          host: config.dashboardHost,
+          port: config.dashboardPort,
+          url: `http://${config.dashboardHost}:${config.dashboardPort}`,
+        }
+      : null,
     conversations: [],
     tasks: allTasks.map((task) => ({
       name: task.name,
@@ -145,6 +158,7 @@ async function status(asJson) {
   console.log(`  state   : ${config.stateDir}`);
   console.log(`  log     : ${config.logFile}`);
   if (config.configFile) console.log(`  config  : ${config.configFile}`);
+  if (data.dashboard) console.log(`  dashboard: ${data.dashboard.url}`);
   console.log('');
   console.log(`Conversations: ${data.conversations.length}`);
   for (const conv of data.conversations.slice(0, 20)) {
@@ -180,19 +194,56 @@ async function status(asJson) {
   );
 }
 
-async function run() {
+async function run({ dashboard: withDashboard = false } = {}) {
   const config = loadConfig();
+  if (withDashboard && !config.dashboardPort) config.dashboardPort = 7345;
   const log = createLogger({ level: config.logLevel, file: config.logFile });
   const lock = acquireLock(config.lockFile);
 
   try {
     log.info(`${APP} ${VERSION} starting`);
     const daemon = await startDaemon(config, log);
+    if (daemon.dashboard) log.info(`dashboard: ${daemon.dashboard.url}`);
     await daemon.done;
   } finally {
     lock.release();
     log.close();
   }
+}
+
+// Standalone dashboard: useful to inspect state while the harness is not
+// running (or from another terminal). Settings saved here are picked up by the
+// daemon on the next restart; a running daemon reloads a chat immediately.
+async function dashboard() {
+  const config = loadConfig();
+  const log = createLogger({ level: config.logLevel, file: config.logFile });
+  const port = config.dashboardPort || 7345;
+  const owner = await lockOwner(config.lockFile);
+  // Standalone mode cannot reload the daemon's in-memory sessions, but it can
+  // report whether one is alive and serve the same read/settings API.
+  const control = {
+    alive: () => Boolean(owner?.alive),
+    isRunning: () => Boolean(owner?.alive),
+    runnerCount: () => 0,
+  };
+  const server = await startDashboard({ config, log, control, port });
+  if (!server) {
+    console.error('dashboard disabled (set WABOX_PI_DASHBOARD_PORT or dashboardPort)');
+    process.exitCode = 1;
+    return;
+  }
+  console.log(`dashboard: ${server.url}`);
+  if (owner?.alive) {
+    console.log(`note: ${APP} is running (pid ${owner.pid}); changes apply to the next session.`);
+  }
+  const close = async () => {
+    await server.close();
+    log.close();
+    process.exit(0);
+  };
+  process.on('SIGINT', () => void close());
+  process.on('SIGTERM', () => void close());
+  await new Promise(() => {});
 }
 
 export async function main(argv) {
@@ -201,7 +252,9 @@ export async function main(argv) {
   switch (command) {
     case 'run':
     case 'start':
-      return run();
+      return run({ dashboard: rest.includes('--dashboard') });
+    case 'dashboard':
+      return dashboard();
     case 'status':
       return status(rest.includes('--json'));
     case 'version':

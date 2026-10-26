@@ -73,11 +73,12 @@ function normalizeImageGen(value, base) {
 
 // Keys a per-conversation override may set. Values replace the instance value
 // (lists are not merged). Path-valued keys are resolved against the config file.
-const CONVERSATION_KEYS = [
+export const CONVERSATION_KEYS = [
   'workspace',
   'modelProvider',
   'model',
   'thinkingLevel',
+  'systemPrompt',
   'turnFeedbackMs',
   'turnFeedbackReact',
   'turnTimeoutMs',
@@ -112,6 +113,9 @@ function normalizeConversation(override, base) {
   if (override.modelProvider !== undefined) out.modelProvider = String(override.modelProvider);
   if (override.model !== undefined) out.model = String(override.model);
   if (override.thinkingLevel !== undefined) out.thinkingLevel = String(override.thinkingLevel);
+  if (override.systemPrompt !== undefined) {
+    out.systemPrompt = override.systemPrompt === null ? null : String(override.systemPrompt);
+  }
   if (override.turnFeedbackMs !== undefined) out.turnFeedbackMs = int(override.turnFeedbackMs, 60_000, { min: 0 });
   if (override.turnFeedbackReact !== undefined) out.turnFeedbackReact = String(override.turnFeedbackReact);
   if (override.turnTimeoutMs !== undefined) out.turnTimeoutMs = int(override.turnTimeoutMs, 600_000, { min: 0 });
@@ -176,10 +180,17 @@ function env(name) {
   return process.env[name];
 }
 
-export function loadConfig({ cwd = process.cwd() } = {}) {
-  const configFile =
+// Resolve the config file path the same way `loadConfig` does, whether or not
+// the file exists yet. The dashboard uses it to create the file on first save.
+export function configFilePath({ cwd = process.cwd() } = {}) {
+  return (
     resolveFrom(cwd, env('WABOX_PI_CONFIG')) ||
-    path.join(xdg.config(), 'wabox-pi', 'config.json');
+    path.join(xdg.config(), 'wabox-pi', 'config.json')
+  );
+}
+
+export function loadConfig({ cwd = process.cwd() } = {}) {
+  const configFile = configFilePath({ cwd });
   const file = readJson(configFile);
   const base = file ? path.dirname(configFile) : cwd;
 
@@ -244,6 +255,8 @@ export function loadConfig({ cwd = process.cwd() } = {}) {
 
   const config = {
     configFile: file ? configFile : null,
+    // Always set, so tooling (the dashboard) can create the file on first save.
+    configFilePath: configFile,
     inboxDir: resolveFrom(base, env('WABOX_INBOX') || file?.inboxDir || wabox.inboxDir),
     outboxDir: resolveFrom(base, env('WABOX_OUTBOX') || file?.outboxDir || wabox.outboxDir),
     stateDir,
@@ -385,6 +398,10 @@ export function loadConfig({ cwd = process.cwd() } = {}) {
     apiRetryMultiplier: Number(
       env('WABOX_PI_API_RETRY_MULTIPLIER') ?? file?.apiRetryMultiplier ?? 2,
     ) || 2,
+
+    // Dashboard: HTTP server for managing conversations via a web UI.
+    dashboardHost: env('WABOX_PI_DASHBOARD_HOST') || file?.dashboardHost || '127.0.0.1',
+    dashboardPort: int(env('WABOX_PI_DASHBOARD_PORT') ?? file?.dashboardPort, 0, { min: 0 }),
 
     // Thread routing: enable multi-topic sessions per chat (disabled by default).
     threads: bool(env('WABOX_PI_THREADS') ?? file?.threads, false),

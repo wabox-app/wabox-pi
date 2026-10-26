@@ -30,7 +30,7 @@ import { createFetchTool, createSearchTool } from './web.js';
 import { fetchWithRetry } from './retry.js';
 import { formatContext, formatUsage, summarizeUsage } from './usage.js';
 import { resolveBashTool, workspaceJailExtension } from './jail.js';
-import { readMemory } from './workspace.js';
+import { readMemory, readSystemPrompt } from './workspace.js';
 
 export class ConversationAgent {
   constructor({ config, log, slug, paths, jobs }) {
@@ -110,6 +110,13 @@ export class ConversationAgent {
       this.log.debug(`[${this.slug}] loaded MEMORY.md (${memory.length} chars)`);
     }
 
+    // System prompt layering: pi's base prompt -> harness WhatsApp rules ->
+    // the operator's inline override -> the workspace SYSTEM.md file. The file
+    // is edited from the dashboard (or by hand) and read once per session.
+    const systemPromptFile = readSystemPrompt(this.paths.workspace);
+    const systemPromptInline = this.config.systemPrompt?.trim() || null;
+    const extraSystemPrompt = [systemPromptInline, systemPromptFile].filter(Boolean).join('\n\n');
+
     const loader = new DefaultResourceLoader({
       cwd: this.paths.workspace,
       agentDir: getAgentDir(),
@@ -136,6 +143,7 @@ export class ConversationAgent {
           imageGen: Boolean(this.config.imageGen?.enabled !== false),
           memory,
         }),
+        ...(extraSystemPrompt ? [extraSystemPrompt] : []),
       ],
     });
     await loader.reload();

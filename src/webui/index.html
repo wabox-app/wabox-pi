@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>wabox-pi</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <div class="app">
+    <aside class="sidebar">
+      <div class="brand">
+        <h1>wabox-pi</h1>
+        <span class="ver" id="version"></span>
+      </div>
+      <div class="tools">
+        <button class="btn" data-nav="overview">Visão geral</button>
+        <button class="btn" data-nav="tasks">Jobs</button>
+        <button class="btn" data-nav="logs">Logs</button>
+      </div>
+      <input class="search" id="search" placeholder="Buscar conversa…" autocomplete="off">
+      <div class="conv-list" id="convList"></div>
+      <div class="foot" id="foot"></div>
+    </aside>
+    <main class="main">
+      <div class="topbar">
+        <h2 id="title">Visão geral</h2>
+        <span id="crumb"></span>
+        <span class="spacer"></span>
+        <span class="pill" id="statusPill">…</span>
+      </div>
+      <div class="tabs" id="tabs"></div>
+      <div class="content" id="content"></div>
+    </main>
+  </div>
+  <div class="toast" id="toast"></div>
+  <script type="module" src="/app.js"></script>
+</body>
+</html>

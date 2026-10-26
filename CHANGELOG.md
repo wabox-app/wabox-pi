@@ -16,6 +16,14 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- Management dashboard (`wabox-pi run --dashboard`, `wabox-pi dashboard`): a
+  loopback-bound web UI and JSON API to inspect conversations, transcripts,
+  scheduled jobs and the log, and to edit per-conversation settings live.
+- Per-conversation system prompt layers: inline `systemPrompt` in `config.json`
+  and an optional workspace `SYSTEM.md`, both appended to pi's prompt.
+- `dashboardHost` / `dashboardPort` settings, `WABOX_PI_DASHBOARD_*` env vars,
+  and an opt-in bearer token for non-loopback binds.
+
 - Initial harness: watches wabox-core's inbox, claims envelopes (read receipt on
   pickup), runs one persistent pi session per conversation, and replies through
   wabox-core's outbox.

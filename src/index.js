@@ -1,6 +1,8 @@
 // Programmatic entry point. The CLI uses these; embedding hosts can too.
 
 export { startDaemon } from './daemon.js';
+export { startDashboard } from './dashboard.js';
+export { createApi } from './api.js';
 export { loadConfig } from './config.js';
 export { ConversationAgent } from './agent.js';
 export { buildTurnPrompt } from './prompt.js';
