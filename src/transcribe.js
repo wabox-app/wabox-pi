@@ -16,8 +16,9 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
+import crypto from 'node:crypto';
 import { spawn } from 'node:child_process';
-import { readStoredCredential } from '@earendil-works/pi-coding-agent';
+import { ModelRuntime, readStoredCredential, resolveCliModel } from '@earendil-works/pi-coding-agent';
 import { shellQuote } from './jail.js';
 
 const OPENROUTER_CHAT_URL = 'https://openrouter.ai/api/v1/chat/completions';
@@ -42,19 +43,54 @@ export function isAudio(media) {
 }
 
 export function transcriptionConfigured(config) {
+  return transcriptionBackends(config).length > 0;
+}
+
+// A conversation may override a few fields and keep the instance's backend, so
+// only these travel from the primary into each fallback entry. Backend identity
+// (provider/command/baseUrl/model/key) is never inherited: a fallback that sets
+// `command` must not silently inherit `provider: openrouter` from the primary.
+const INHERITED_BACKEND_KEYS = ['language', 'prompt', 'timeoutMs'];
+
+// Ordered list of backends: the primary first, then `fallback` entries. Empty
+// when transcription is disabled or nothing is configured.
+export function transcriptionBackends(config) {
   const t = config ?? {};
-  if (t.enabled === false) return false;
-  return Boolean(t.command || t.baseUrl || t.provider);
+  if (t.enabled === false) return [];
+
+  const inherited = {};
+  for (const key of INHERITED_BACKEND_KEYS) {
+    if (t[key] !== undefined) inherited[key] = t[key];
+  }
+
+  const backends = [];
+  const primary = { ...t };
+  delete primary.fallback;
+  if (providerOf(primary)) backends.push(primary);
+
+  for (const entry of Array.isArray(t.fallback) ? t.fallback : []) {
+    if (!entry || typeof entry !== 'object') continue;
+    const backend = { ...inherited, ...entry };
+    delete backend.fallback;
+    if (backend.enabled !== false && providerOf(backend)) backends.push(backend);
+  }
+  return backends;
+}
+
+function backendLabel(backend) {
+  if (backend.command) return backend.command;
+  const provider = providerOf(backend);
+  if (provider === 'openrouter') return `${backend.model} @ openrouter`;
+  if (provider === 'openai') return `${backend.model} @ ${backend.baseUrl}`;
+  if (provider) return `${provider}/${backend.model ?? '?'}`;
+  return 'off';
 }
 
 export function transcriptionLabel(config) {
-  const t = config ?? {};
-  if (!t.enabled) return 'off';
-  if (t.command) return t.command;
-  const provider = providerOf(t);
-  if (provider === 'openrouter') return `${t.model} @ openrouter`;
-  if (t.baseUrl) return `${t.model} @ ${t.baseUrl}`;
-  return 'off';
+  const backends = transcriptionBackends(config);
+  if (!backends.length) return 'off';
+  const labels = backends.map(backendLabel);
+  return labels.length > 1 ? `${labels[0]} (+${labels.length - 1} fallback)` : labels[0];
 }
 
 export function providerOf(config) {
@@ -62,7 +98,22 @@ export function providerOf(config) {
   if (t.command) return 'command';
   if (t.provider === 'openrouter' || t.provider === 'chat-audio') return 'openrouter';
   if (t.baseUrl) return 'openai';
+  // Anything else is a pi provider id (`opencode-go`, `google`, …): the model
+  // is resolved through pi's catalog and called directly.
   return t.provider || null;
+}
+
+// pi providers that proxy OpenAI/Gemini need a routing session header.
+function needsOpenCodeSession(providerId, baseUrl) {
+  return /^opencode(-go)?$/.test(providerId ?? '') || /(^|\.)opencode\.ai$/.test(hostOf(baseUrl));
+}
+
+function hostOf(url) {
+  try {
+    return new URL(url).hostname;
+  } catch {
+    return '';
+  }
 }
 
 function credentialToken(credential) {
@@ -112,12 +163,194 @@ export async function resolveTranscriptionKey(config, deps = {}) {
 }
 
 export async function transcribeFile({ config, filePath, log, fetchImpl = fetch, deps = {} }) {
-  const t = config ?? {};
-  const provider = providerOf(t);
-  if (provider === 'command') return runCommand(t.command, filePath, t);
-  if (provider === 'openrouter') return callChatAudio(t, filePath, { log, fetchImpl, deps });
-  if (provider === 'openai') return callTranscriptionsApi(t, filePath, { log, fetchImpl, deps });
+  const backends = transcriptionBackends(config);
+  if (!backends.length) throw new Error('transcription is not configured');
+
+  const failures = [];
+  for (const [index, backend] of backends.entries()) {
+    try {
+      return await transcribeWith(backend, filePath, { log, fetchImpl, deps });
+    } catch (err) {
+      failures.push(`${backendLabel(backend)}: ${err?.message || err}`);
+      if (index < backends.length - 1) {
+        log?.warn(
+          `transcription backend "${backendLabel(backend)}" failed (${err?.message || err}); trying fallback`,
+        );
+      }
+    }
+  }
+
+  // Every backend failed: one message with each reason, so the prompt and the
+  // log say what to fix (credits, key, command path).
+  throw new Error(`transcription failed on ${backends.length} backend(s): ${failures.join(' | ')}`);
+}
+
+function transcribeWith(backend, filePath, { log, fetchImpl, deps }) {
+  const provider = providerOf(backend);
+  if (provider === 'command') return runCommand(backend.command, filePath, backend);
+  if (provider === 'openrouter') return callChatAudio(backend, filePath, { log, fetchImpl, deps });
+  if (provider === 'openai') return callTranscriptionsApi(backend, filePath, { log, fetchImpl, deps });
+  if (provider) return callPiAudio(backend, provider, filePath, { log, fetchImpl, deps });
   throw new Error('transcription is not configured');
+}
+
+let runtimePromise = null;
+
+function transcriptionRuntime(deps) {
+  if (deps.modelRuntime) return Promise.resolve(deps.modelRuntime);
+  runtimePromise ??= ModelRuntime.create({ allowModelNetwork: false });
+  return runtimePromise;
+}
+
+// Resolve the provider credential so the request uses the same secret pi would.
+// API keys go in `x-goog-api-key` for Gemini; OAuth tokens go as Bearer.
+function piCredential(providerId, deps) {
+  const read = deps.readPiCredential ?? ((id) => {
+    try {
+      return readStoredCredential(id);
+    } catch {
+      return undefined;
+    }
+  });
+  return read(providerId);
+}
+
+const THINKING_SUFFIXES = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'];
+
+// The id the provider actually expects. Users type the upstream id (or
+// `provider/id`), while pi's catalog may be stale or fuzzy-match a deprecated
+// sibling (e.g. `gemini-4-argon` → `gemini-4-argon-contributor`). Prefer what
+// was configured; fall back to the catalog id when nothing was typed.
+function requestedModelId(text) {
+  if (!text) return null;
+  let value = String(text).trim();
+  const slash = value.indexOf('/');
+  if (slash !== -1) value = value.slice(slash + 1);
+  const colon = value.lastIndexOf(':');
+  if (colon > 0 && THINKING_SUFFIXES.includes(value.slice(colon + 1))) {
+    value = value.slice(0, colon);
+  }
+  return value.trim() || null;
+}
+
+async function callPiAudio(t, providerId, filePath, { log, fetchImpl, deps }) {
+  const modelRuntime = await transcriptionRuntime(deps);
+  const resolved = resolveCliModel({
+    cliProvider: providerId,
+    cliModel: t.model || undefined,
+    modelRuntime,
+  });
+  if (resolved.error || !resolved.model) {
+    throw new Error(
+      resolved.error || `model "${t.model ?? ''}" not found for provider "${providerId}"`,
+    );
+  }
+  const model = resolved.model;
+  const requestId = requestedModelId(t.model) || model.id;
+
+  const credential = t.apiKey || t.apiKeyEnv || t.apiKeyFile
+    ? null
+    : piCredential(t.piProvider || providerId, deps);
+  const key = await resolveTranscriptionKey({ ...t, piProvider: t.piProvider || providerId }, deps);
+  if (!key) {
+    throw new Error(
+      `no API key for ${providerId} (set transcription.apiKey/apiKeyEnv/apiKeyFile, or sign in to pi for that provider)`,
+    );
+  }
+  const oauth = credential?.type === 'oauth';
+
+  const { data, format, cleanup } = await encodeAudio(filePath, t);
+  const instruction =
+    t.prompt ||
+    `Transcribe this audio${t.language ? ` in ${t.language}` : ''} verbatim. ` +
+      'Return only the transcription, with no preamble or commentary.';
+
+  const controller = new AbortController();
+  const timeoutMs = t.timeoutMs ?? 120_000;
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  timer.unref?.();
+
+  const baseUrl = String(model.baseUrl || '').replace(/\/+$/, '');
+  const headers = { 'content-type': 'application/json' };
+  if (needsOpenCodeSession(providerId, baseUrl)) headers['x-opencode-session'] = crypto.randomUUID();
+
+  try {
+    let url;
+    let body;
+    if (model.api === 'google-generative-ai') {
+      headers[oauth ? 'authorization' : 'x-goog-api-key'] = oauth ? `Bearer ${key}` : key;
+      url = `${baseUrl}/models/${requestId}:generateContent`;
+      body = {
+        contents: [
+          {
+            role: 'user',
+            parts: [{ text: instruction }, { inlineData: { mimeType: `audio/${format}`, data } }],
+          },
+        ],
+      };
+    } else if (model.api === 'openai-completions') {
+      headers.authorization = `Bearer ${key}`;
+      url = `${baseUrl}/chat/completions`;
+      body = {
+        model: requestId,
+        messages: [
+          {
+            role: 'user',
+            content: [
+              { type: 'text', text: instruction },
+              { type: 'input_audio', input_audio: { data, format } },
+            ],
+          },
+        ],
+      };
+    } else {
+      throw new Error(
+        `provider "${providerId}" uses ${model.api}, which this harness cannot send audio to ` +
+          '(use openrouter, an OpenAI-compatible endpoint, a command, or a Gemini/OpenAI-compatible pi provider)',
+      );
+    }
+
+    const res = await fetchImpl(url, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(body),
+      signal: controller.signal,
+    });
+    const raw = await res.text();
+    if (!res.ok) {
+      throw new Error(`transcription API ${res.status}: ${raw.trim().slice(0, 400)}`);
+    }
+    let value;
+    try {
+      value = JSON.parse(raw);
+    } catch {
+      throw new Error(`transcription API returned invalid JSON: ${raw.slice(0, 200)}`);
+    }
+    if (value.error) {
+      throw new Error(`transcription API error: ${JSON.stringify(value.error).slice(0, 400)}`);
+    }
+
+    const text =
+      model.api === 'google-generative-ai'
+        ? (value.candidates ?? [])
+            .flatMap((candidate) => candidate.content?.parts ?? [])
+            .map((part) => part.text ?? '')
+            .join('')
+            .trim()
+        : String(value.choices?.[0]?.message?.content ?? '').trim();
+    if (!text) throw new Error('transcription API returned no text');
+
+    log?.info(`transcribed audio with ${providerId}/${requestId}`);
+    return { text, model: `${providerId}/${requestId}` };
+  } catch (err) {
+    if (err.name === 'AbortError') {
+      throw new Error(`transcription API timed out after ${timeoutMs}ms`);
+    }
+    throw err;
+  } finally {
+    clearTimeout(timer);
+    if (cleanup) await fs.rm(cleanup, { recursive: true, force: true }).catch(() => {});
+  }
 }
 
 function runCommand(command, filePath, t) {

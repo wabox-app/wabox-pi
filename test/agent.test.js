@@ -161,3 +161,33 @@ test('describeImages records a failure without throwing', async () => {
     await cleanup();
   }
 });
+
+test('transcribeBatch falls back to the next backend', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'wabox-agent-stt-'));
+  const media = path.join(dir, 'media');
+  await fs.mkdir(media, { recursive: true });
+  const file = path.join(media, 'note.ogg');
+  await fs.writeFile(file, 'AUDIO-BYTES');
+
+  const agent = new ConversationAgent({
+    config: {
+      transcription: {
+        command: 'false',
+        fallback: [{ command: 'cat' }],
+      },
+    },
+    log: silent,
+    slug: 'slug',
+    paths: { workspace: path.join(dir, 'ws'), sessions: path.join(dir, 's'), media },
+  });
+
+  try {
+    const envelope = { media: { type: 'audio', localPath: file, mimetype: 'audio/ogg' } };
+    await agent.transcribeBatch([envelope]);
+    assert.equal(envelope.media.transcript, 'AUDIO-BYTES');
+    assert.equal(envelope.media.transcriptModel, 'command');
+    assert.equal(await fs.readFile(`${file}.txt`, 'utf8'), 'AUDIO-BYTES\n');
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});

@@ -315,6 +315,7 @@ const TABS = [
   { id: 'session', label: 'Sessão' },
   { id: 'config', label: 'Configuração' },
   { id: 'vision', label: 'Visão' },
+  { id: 'audio', label: 'Áudio' },
   { id: 'prompt', label: 'System prompt' },
   { id: 'workspace', label: 'Workspace' },
 ];
@@ -334,6 +335,7 @@ async function renderConversation(slug, tab) {
     session: renderConvSession,
     config: renderConvConfig,
     vision: renderConvVision,
+    audio: renderConvAudio,
     prompt: renderConvPrompt,
     workspace: renderConvWorkspace,
   };
@@ -371,6 +373,10 @@ async function renderConvOverview(conv, settings) {
     {
       title: 'Visão (imagens recebidas)',
       body: visionCardBody(effective.vision, settings.instance.vision),
+    },
+    {
+      title: 'Áudio (notas de voz)',
+      body: audioCardBody(effective.transcription),
     },
   ];
 
@@ -731,6 +737,191 @@ async function ensureModels() {
 }
 
 
+
+/* ---------- audio ---------- */
+
+function audioCardBody(t) {
+  const v = t ?? {};
+  const backends = [];
+  if (v.command || v.provider || v.baseUrl) backends.push(v);
+  backends.push(...(Array.isArray(v.fallback) ? v.fallback : []));
+  const active = v.enabled !== false ? backends.filter((b) => b.command || b.provider || b.baseUrl) : [];
+  if (!active.length) {
+    return `<div class="big" style="font-size:15px">desativado</div>
+      <div class="hint">Configure um backend de transcrição na aba Áudio (OpenRouter, endpoint OpenAI-compatível ou comando local).</div>`;
+  }
+  const first = active[0];
+  const label = first.command
+    ? 'command'
+    : `${first.provider ?? (first.baseUrl ? 'openai' : '?')}/${first.model ?? '?'}`;
+  return `
+    <div class="big" style="font-size:15px">${esc(label)}</div>
+    <div class="row"><span class="k">backends</span><span class="v">${active.length}${active.length > 1 ? ` (${active.length - 1} fallback)` : ''}</span></div>
+    <div class="row"><span class="k">idioma</span><span class="v">${esc(v.language ?? 'auto')}</span></div>
+    <div class="hint">Se o backend principal falhar (créditos, queda, chave), o próximo da lista é tentado.</div>`;
+}
+
+async function renderConvAudio(conv, settings) {
+  const { providers } = await ensureModels();
+  const instance = settings.instance.transcription ?? {};
+  const override = settings.overrides.transcription ?? {};
+  const effective = settings.effective.transcription ?? {};
+  const opt = (value, label, current) =>
+    `<option value="${esc(value)}" ${String(current) === String(value) ? 'selected' : ''}>${esc(label)}</option>`;
+
+  const tri = (key, inherited) =>
+    `<select data-tkey="${key}" data-ttype="bool">
+      <option value="" ${override[key] === undefined ? 'selected' : ''}>(herdar: ${inherited === false ? 'não' : 'sim'})</option>
+      ${opt('true', 'sim', override[key])}
+      ${opt('false', 'não', override[key])}
+    </select>`;
+
+  const fallbackJson = JSON.stringify(Array.isArray(override.fallback) ? override.fallback : [], null, 2);
+
+  content.innerHTML = `
+    <div class="card" style="margin-bottom:16px">
+      <h3>Transcrição de áudio</h3>
+      <div class="hint" style="margin-bottom:12px">
+        Notas de voz são transcritas antes do turno. O backend principal é tentado primeiro;
+        cada entrada de <code>fallback</code> é tentada em ordem se ele falhar.
+        Campos vazios herdam a instância (placeholder).
+      </div>
+      <form id="audioForm">
+        <div class="field">
+          <label>Ativado</label>
+          ${tri('enabled', instance.enabled)}
+        </div>
+        <div class="field">
+          <label>Backend principal (provider)</label>
+          <input data-tkey="provider" data-ttype="text" list="audio-providers" value="${esc(override.provider ?? '')}"
+            placeholder="${esc(instance.provider ?? (instance.command ? 'command' : instance.baseUrl ? 'openai' : 'openrouter | openai | command | id de provider do pi'))}"
+            autocomplete="off">
+          <datalist id="audio-providers">
+            <option value="openrouter">openrouter (chat + input_audio)</option>
+            <option value="openai">openai (endpoint /audio/transcriptions)</option>
+            <option value="command">command (executável local)</option>
+            ${providers.map((provider) => `<option value="${esc(provider)}">${esc(provider)} (modelo do pi)</option>`).join('')}
+          </datalist>
+          <div class="hint">
+            Um id de provider do pi (ex.: <code>opencode-go</code>) usa a credencial do pi e o modelo
+            informado, via Gemini (<code>inlineData</code>) ou chat com <code>input_audio</code>.
+          </div>
+          <datalist id="audio-model-options">
+            ${models.map((model) => `<option value="${esc(model.id)}">${esc(model.provider)} · ${esc(model.name)}</option>`).join('')}
+          </datalist>
+        </div>
+        <div class="two-col">
+          <div class="field">
+            <label>Modelo</label>
+            <input data-tkey="model" data-ttype="text" list="audio-model-options" value="${esc(override.model ?? '')}"
+              placeholder="${esc(instance.model ?? 'ex.: gemini-4-argon (pi) ou whisper-large-v3')}" autocomplete="off">
+          </div>
+          <div class="field">
+            <label>Idioma (ISO, vazio = auto)</label>
+            <input data-tkey="language" data-ttype="text" value="${esc(override.language ?? '')}"
+              placeholder="${esc(instance.language ?? 'pt')}" autocomplete="off">
+          </div>
+        </div>
+        <div class="field">
+          <label>baseUrl (para provider openai)</label>
+          <input data-tkey="baseUrl" data-ttype="text" value="${esc(override.baseUrl ?? '')}"
+            placeholder="${esc(instance.baseUrl ?? 'ex.: https://api.groq.com/openai/v1/audio/transcriptions')}" autocomplete="off">
+        </div>
+        <div class="field">
+          <label>Command local (recebe o áudio como argumento; stdout = transcrição)</label>
+          <input data-tkey="command" data-ttype="text" value="${esc(override.command ?? '')}"
+            placeholder="${esc(instance.command ?? '—')}" autocomplete="off">
+        </div>
+        <div class="field">
+          <label>Prompt/instrução para o backend</label>
+          <textarea data-tkey="prompt" data-ttype="text" placeholder="${esc(instance.prompt ?? 'padrão do backend')}">${esc(override.prompt ?? '')}</textarea>
+        </div>
+        <div class="field">
+          <label>timeoutMs</label>
+          <input type="number" min="1000" data-tkey="timeoutMs" data-ttype="int" value="${override.timeoutMs ?? ''}"
+            placeholder="${esc(instance.timeoutMs ?? 120000)}">
+        </div>
+        <div class="field">
+          <label>Fallback (JSON — lista de backends, tentados em ordem)</label>
+          <textarea data-initial="${esc(fallbackJson)}" id="audioFallback" spellcheck="false"
+            placeholder='[{"provider":"openai","baseUrl":"https://api.groq.com/openai/v1/audio/transcriptions","model":"whisper-large-v3","apiKeyFile":"stt-groq.key","language":"pt"}]'>${esc(fallbackJson)}</textarea>
+          <div class="hint">
+            Exemplo acima: OpenRouter como principal e Groq Whisper como reserva. Segredos aparecem
+            como <code>[set]</code> e são preservados ao salvar; digite um valor novo para trocá-los.
+          </div>
+        </div>
+        <div class="actions">
+          <button class="btn primary" type="submit">Salvar áudio</button>
+          <button class="btn danger" type="button" id="clearAudio">Remover override de áudio</button>
+        </div>
+        <div class="hint" style="margin-top:8px">
+          Efetivo agora: ${esc(effective.command ? `command ${effective.command}` : effective.model ? `${effective.provider ?? (effective.baseUrl ? 'openai' : '?')}/${effective.model}` : 'não configurado')}
+          · ${Array.isArray(effective.fallback) ? effective.fallback.length : 0} fallback(s)
+          · idioma ${esc(effective.language ?? 'auto')}
+        </div>
+      </form>
+    </div>`;
+
+  $('#audioForm').onsubmit = async (event) => {
+    event.preventDefault();
+    const transcription = {};
+    for (const el of document.querySelectorAll('#audioForm [data-tkey]')) {
+      const key = el.dataset.tkey;
+      const type = el.dataset.ttype;
+      const raw = el.value;
+      if (raw === '') continue;
+      if (type === 'bool') transcription[key] = raw === 'true';
+      else if (type === 'int') transcription[key] = Number.parseInt(raw, 10);
+      else transcription[key] = raw;
+    }
+
+    const fallbackEl = $('#audioFallback');
+    if (fallbackEl.value !== fallbackEl.dataset.initial) {
+      const text = fallbackEl.value.trim();
+      if (!text) {
+        transcription.fallback = [];
+      } else {
+        let entries;
+        try {
+          entries = JSON.parse(text);
+        } catch (err) {
+          toast(`Fallback JSON inválido: ${err.message}`, true);
+          return;
+        }
+        if (!Array.isArray(entries)) {
+          toast('Fallback precisa ser uma lista JSON.', true);
+          return;
+        }
+        transcription.fallback = entries;
+      }
+    }
+
+    try {
+      await api(`/conversations/${encodeURIComponent(conv.slug)}/settings`, {
+        method: 'PUT',
+        body: JSON.stringify({ transcription: Object.keys(transcription).length ? transcription : null }),
+      });
+      toast('Configuração de áudio salva.');
+      await render();
+    } catch (err) {
+      fail(err);
+    }
+  };
+
+  $('#clearAudio').onclick = async () => {
+    if (!confirm('Remover o override de áudio desta conversa? Volta a herdar a instância.')) return;
+    try {
+      await api(`/conversations/${encodeURIComponent(conv.slug)}/settings`, {
+        method: 'PUT',
+        body: JSON.stringify({ transcription: null }),
+      });
+      toast('Override removido.');
+      await render();
+    } catch (err) {
+      fail(err);
+    }
+  };
+}
 
 /* ---------- vision ---------- */
 

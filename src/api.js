@@ -11,6 +11,7 @@ import {
   CONVERSATION_KEYS,
   configFilePath,
   conversationConfig,
+  normalizeTranscriptionOverride,
   normalizeVision,
 } from './config.js';
 import { conversationPaths, readIdentity } from './workspace.js';
@@ -86,6 +87,7 @@ const EDITABLE = {
   workspaceTemplate: 'string',
   imageGen: 'object',
   vision: 'object',
+  transcription: 'object',
 };
 
 // Instance-level keys echoed to the UI so the operator can see what a
@@ -122,6 +124,7 @@ const INSTANCE_VIEW = [
   'workspaceTemplate',
   'imageGen',
   'vision',
+  'transcription',
   'logLevel',
   'timezone',
   'threads',
@@ -206,6 +209,7 @@ function redact(value) {
     clone.imageGen,
     clone.vision,
     clone.router,
+    ...(Array.isArray(clone.transcription?.fallback) ? clone.transcription.fallback : []),
   ]) {
     if (!obj || typeof obj !== 'object') continue;
     for (const key of ['apiKey', 'apiKeyFile', 'apiKeyEnv', 'token', 'password', 'secret']) {
@@ -213,6 +217,31 @@ function redact(value) {
     }
   }
   return clone;
+}
+
+// The dashboard only ever sees `[set]` for secrets. When a fallback entry comes
+// back from the editor, put the real value (read from the config file) back;
+// anything still unresolved is an error, never a stored placeholder.
+export function restoreRedactedSecrets(patch, previous) {
+  const entries = patch?.transcription?.fallback;
+  if (!Array.isArray(entries)) return [];
+  const previousEntries = Array.isArray(previous?.transcription?.fallback)
+    ? previous.transcription.fallback
+    : [];
+  const unresolved = [];
+
+  patch.transcription.fallback = entries.map((entry, index) => {
+    if (!entry || typeof entry !== 'object') return entry;
+    const before = previousEntries[index] ?? {};
+    const out = { ...entry };
+    for (const [key, value] of Object.entries(out)) {
+      if (value !== '[set]') continue;
+      if (before[key] !== undefined && before[key] !== '[set]') out[key] = before[key];
+      else unresolved.push(`fallback[${index}].${key}`);
+    }
+    return out;
+  });
+  return unresolved;
 }
 
 function pick(source, keys) {
@@ -526,11 +555,24 @@ export function createApi({ config, log, control = null }) {
 
     const raw = await readConfigFile();
 
+    const unresolved = restoreRedactedSecrets(overrides, raw.conversations?.[slug]);
+    if (unresolved.length) {
+      throw badRequest(`replace ${unresolved.join(', ')} with the real value (it cannot be [set])`);
+    }
+
     // `vision` is nested: normalize it here so a bad hand-written value cannot
     // reach the daemon, and store an empty object as "no override".
     if (overrides.vision !== undefined && overrides.vision !== null) {
       const vision = normalizeVision(overrides.vision);
       overrides.vision = vision && Object.keys(vision).length ? vision : null;
+    }
+    if (overrides.transcription !== undefined && overrides.transcription !== null) {
+      const transcription = normalizeTranscriptionOverride(
+        overrides.transcription,
+        path.dirname(configTarget()),
+      );
+      overrides.transcription =
+        transcription && Object.keys(transcription).length ? transcription : null;
     }
 
     const conversations = raw.conversations && typeof raw.conversations === 'object'

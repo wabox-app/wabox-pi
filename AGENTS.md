@@ -33,7 +33,7 @@ the pi SDK, `chokidar`, and `typebox`.
 | `src/webui/` | The dashboard SPA (`index.html`, `app.js`, `styles.css`). No build step. |
 | `src/workspace.js` | Per-conversation dirs; seeds `AGENTS.md` once. |
 | `src/jail.js` | Path-jail file tools; bubblewrap-sandbox `bash`. |
-| `src/transcribe.js` | Inbound-audio transcription (command, OpenAI API, or OpenRouter chat). |
+| `src/transcribe.js` | Inbound-audio transcription: ordered backend chain (command, OpenAI API, OpenRouter chat, or a pi provider with Gemini inline audio / `input_audio`). |
 | `src/vision.js` | Inbound-image descriptions when the chat model is text-only (pi vision model or command). |
 | `src/web.js` | `wabox_fetch` / `wabox_search` tools (SSRF-guarded, run in-process). |
 | `src/generate_image.js` | `wabox_generate_image` tool (OpenRouter/Pollinations, run in-process). |
@@ -111,6 +111,10 @@ the pi SDK, `chokidar`, and `typebox`.
   that resolve outside the workspace (plus the conversation's `media/`) via a
   pi `tool_call` handler, and wraps `bash` in bubblewrap. `workspaceOverrides`
   redirects `cwd`; it must not defeat the jail's read roots.
+- **Audio has a fallback chain.** `transcription.fallback` entries are complete
+  backends tried in order after the primary fails (credits, outage, bad key);
+  only `language`/`prompt`/`timeoutMs` are inherited. The final error lists each
+  backend's reason. `transcription` is merged per conversation like `vision`.
 - **Images survive a text-only model.** `vision.mode: auto` describes an inbound
   image only when the active model lacks `image` in `model.input`; `always`
   describes regardless. The description goes into the prompt like a transcript
@@ -155,6 +159,14 @@ the pi SDK, `chokidar`, and `typebox`.
 - pi's model input modalities are `text` and `image` only (`ModelInputModality`),
   so audio must be transcribed before the turn. Transcription runs in the agent
   (`transcribeBatch`) so a slow STT call does not block the inbox claim chain.
+- `transcription.provider` may be a **pi provider id**. `callPiAudio` resolves
+  the model through pi (credentials reused) and sends the audio as Gemini
+  `inlineData` or OpenAI `input_audio`. The request uses the configured model id
+  verbatim, because the bundled catalog can be stale and fuzzy-match a deprecated
+  sibling. `x-opencode-session` is added for opencode hosts.
+- `transcription.provider: "openrouter"` requires a paid balance for audio on
+  OpenRouter (a 402 arrives below the minimum), which is why a fallback chain
+  exists; the message is surfaced in the prompt.
 - `transcription.provider: "openrouter"` sends the audio as an `input_audio`
   content part over chat completions and, with no explicit key, reuses pi's
   stored credential via `readStoredCredential` (`~/.pi/agent/auth.json`). OpenAI

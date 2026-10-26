@@ -423,3 +423,87 @@ test('vision overrides are normalized and empty ones removed', async () => {
     await cleanup();
   }
 });
+
+test('transcription overrides are normalized and merged over the instance', async () => {
+  const { config, api, cleanup } = await fixture();
+  try {
+    await makeConversation(config, 'a-1');
+    config.transcription = {
+      provider: 'openrouter',
+      model: 'google/gemini-3.1-flash-lite',
+      language: 'pt',
+      fallback: [],
+    };
+
+    await api.saveSettings('a-1', {
+      transcription: {
+        model: 'google/gemini-3.1-pro',
+        timeoutMs: '45000',
+        fallback: [{ command: 'local-whisper {file}' }],
+      },
+    });
+
+    const raw = JSON.parse(await fs.readFile(config.configFilePath, 'utf8'));
+    assert.deepEqual(raw.conversations['a-1'].transcription, {
+      model: 'google/gemini-3.1-pro',
+      timeoutMs: 45000,
+      fallback: [{ command: 'local-whisper {file}' }],
+    });
+
+    const settings = await api.getSettings('a-1');
+    assert.equal(settings.effective.transcription.provider, 'openrouter');
+    assert.equal(settings.effective.transcription.model, 'google/gemini-3.1-pro');
+    assert.equal(settings.effective.transcription.language, 'pt');
+    assert.equal(settings.effective.transcription.fallback.length, 1);
+
+    // An empty object is dropped instead of overriding the instance.
+    await api.saveSettings('a-1', { transcription: {} });
+    const after = JSON.parse(await fs.readFile(config.configFilePath, 'utf8'));
+    assert.equal(after.conversations, undefined);
+  } finally {
+    await cleanup();
+  }
+});
+
+test('redacted [set] secrets are restored from the config on save', async () => {
+  const { config, api, cleanup } = await fixture();
+  try {
+    await makeConversation(config, 'a-1');
+    await api.saveSettings('a-1', {
+      transcription: {
+        fallback: [
+          { provider: 'openai', baseUrl: 'https://x/stt', model: 'whisper-large-v3', apiKeyFile: '/secrets/groq.key' },
+        ],
+      },
+    });
+
+    const seen = await api.getSettings('a-1');
+    assert.equal(seen.overrides.transcription.fallback[0].apiKeyFile, '[set]');
+
+    // The editor sends the redacted entry back, changing only the model.
+    const entries = JSON.parse(JSON.stringify(seen.overrides.transcription.fallback));
+    entries[0].model = 'whisper-large-v3-turbo';
+    await api.saveSettings('a-1', { transcription: { fallback: entries } });
+
+    const raw = JSON.parse(await fs.readFile(config.configFilePath, 'utf8'));
+    assert.equal(raw.conversations['a-1'].transcription.fallback[0].apiKeyFile, '/secrets/groq.key');
+    assert.equal(raw.conversations['a-1'].transcription.fallback[0].model, 'whisper-large-v3-turbo');
+  } finally {
+    await cleanup();
+  }
+});
+
+test('an unresolved [set] secret is rejected instead of stored', async () => {
+  const { api, cleanup } = await fixture();
+  try {
+    await assert.rejects(
+      () =>
+        api.saveSettings('a-1', {
+          transcription: { fallback: [{ command: 'x', apiKeyFile: '[set]' }] },
+        }),
+      /replace fallback\[0\]\.apiKeyFile/,
+    );
+  } finally {
+    await cleanup();
+  }
+});

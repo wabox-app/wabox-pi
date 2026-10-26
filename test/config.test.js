@@ -249,3 +249,71 @@ test('a conversation can supply the vision backend without the instance enabling
     await fs.rm(dir, { recursive: true, force: true });
   }
 });
+
+test('a conversation can override transcription and keep the instance backend', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'wabox-cfg-'));
+  const cfg = path.join(dir, 'config.json');
+  const previous = process.env.WABOX_PI_CONFIG;
+  try {
+    await fs.writeFile(
+      cfg,
+      JSON.stringify({
+        stateDir: 'state',
+        transcription: { provider: 'openrouter', model: 'google/gemini-3.1-flash-lite', language: 'pt' },
+        conversations: {
+          'slug-a': {
+            transcription: {
+              model: 'google/gemini-3.1-pro',
+              fallback: [{ provider: 'openai', baseUrl: 'https://api.groq.com/openai/v1/audio/transcriptions', model: 'whisper-large-v3', apiKeyFile: 'groq.key' }],
+            },
+          },
+        },
+      }),
+    );
+    process.env.WABOX_PI_CONFIG = cfg;
+    const config = loadConfig();
+
+    assert.equal(config.transcription.language, 'pt');
+    assert.equal(config.transcription.fallback.length, 0);
+
+    const merged = conversationConfig(config, 'slug-a');
+    assert.equal(merged.transcription.provider, 'openrouter', 'inherits the provider');
+    assert.equal(merged.transcription.model, 'google/gemini-3.1-pro', 'overrides the model');
+    assert.equal(merged.transcription.language, 'pt', 'inherits the language');
+    assert.equal(merged.transcription.fallback.length, 1);
+    assert.equal(merged.transcription.fallback[0].apiKeyFile, path.join(dir, 'groq.key'));
+  } finally {
+    if (previous === undefined) delete process.env.WABOX_PI_CONFIG;
+    else process.env.WABOX_PI_CONFIG = previous;
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('loadConfig normalizes an instance transcription fallback', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'wabox-cfg-'));
+  const cfg = path.join(dir, 'config.json');
+  const previous = process.env.WABOX_PI_CONFIG;
+  try {
+    await fs.writeFile(
+      cfg,
+      JSON.stringify({
+        stateDir: 'state',
+        transcription: {
+          command: 'primary.sh',
+          fallback: [{ command: 'local-whisper {file}', language: 'en' }, { baseUrl: 'https://x/stt', apiKeyFile: './k' }],
+        },
+      }),
+    );
+    process.env.WABOX_PI_CONFIG = cfg;
+    const config = loadConfig();
+    assert.equal(config.transcription.enabled, true);
+    assert.equal(config.transcription.fallback.length, 2);
+    assert.equal(config.transcription.fallback[0].command, 'local-whisper {file}');
+    assert.equal(config.transcription.fallback[0].language, 'en');
+    assert.equal(config.transcription.fallback[1].apiKeyFile, path.join(dir, 'k'));
+  } finally {
+    if (previous === undefined) delete process.env.WABOX_PI_CONFIG;
+    else process.env.WABOX_PI_CONFIG = previous;
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});

@@ -83,6 +83,9 @@ What it exposes per conversation:
   `config.json` and asks the daemon to reload that chat.
 - **Visão** — the image fallback: mode, vision model (or local command), prompt,
   and limits. See [Image fallback](#image-fallback-vision-model).
+- **Áudio** — the transcription backend chain: provider/model or command,
+  language, prompt, timeout, and the ordered fallback list. See
+  [Audio transcription](#audio-transcription).
 - **System prompt** — two layers: an inline `systemPrompt` override in
   `config.json` and the workspace's `SYSTEM.md`, appended to pi's prompt after
   the WhatsApp etiquette rules. Both are read when a session is created.
@@ -225,12 +228,13 @@ a single chat, keyed by the conversation slug (the folder name under
 Overridable keys: `workspace`, `modelProvider`, `model`, `thinkingLevel`,
 `systemPrompt`, `jail`, `sandboxBash`, `sandboxNetwork`, `sandboxDenyRead`,
 `sandboxAllowRead`, `sandboxBashBin`, `tools`, `excludeTools`, `autoReply`,
-`errorReply`, `ackReact`, `batchWindowMs`, `workspaceTemplate`, `vision`. Values
-replace the instance value (lists are not merged); relative paths resolve against
-the config file. A per-slug value wins over the environment variable for that
-conversation. `groupPerParticipant` is instance-wide because it changes the
-slug itself. `vision` is the exception: its fields are merged over the instance
-block.
+`errorReply`, `ackReact`, `batchWindowMs`, `workspaceTemplate`, `vision`,
+`transcription`. Values replace the instance value (lists are not merged);
+relative paths resolve against the config file. A per-slug value wins over the
+environment variable for that conversation. `groupPerParticipant` is
+instance-wide because it changes the slug itself. `vision` and `transcription`
+are the exceptions: their fields are merged over the instance block (a chat can
+change only the model, or add a fallback, and keep the instance backend).
 
 `systemPrompt` is an inline text appended to the system prompt for that
 conversation. The workspace's `SYSTEM.md`, when present, is appended after it.
@@ -249,6 +253,123 @@ only the harness working directory (`cwd`) is redirected.
 
 Without `inboxDir`/`outboxDir`, `wabox-pi` asks `wabox status` (and
 `wabox status --json` on newer cores) before falling back to XDG defaults.
+
+#### Audio transcription
+
+pi's model input is text and images only, so a voice note cannot be handed to
+the agent directly. wabox-pi transcribes it first and puts the transcript in the
+turn prompt (and a `<file>.txt` sidecar next to the media). Pick one backend.
+
+The default is **OpenRouter**, which needs no extra key when you already signed
+in to pi: the stored provider credential is reused (an `openrouter` model that
+accepts audio, sent as an `input_audio` part).
+
+```json
+{
+  "transcription": {
+    "provider": "openrouter",
+    "model": "google/gemini-3.1-flash-lite",
+    "language": "pt"
+  }
+}
+```
+
+An OpenAI-compatible transcription endpoint (OpenAI, Groq, …):
+
+```json
+{
+  "transcription": {
+    "provider": "openai",
+    "baseUrl": "https://api.groq.com/openai/v1/audio/transcriptions",
+    "model": "whisper-large-v3",
+    "apiKeyFile": "stt.key"
+  }
+}
+```
+
+A local command (same contract as `wabox-bot`; the ready-made plugins work):
+
+```json
+{
+  "transcription": {
+    "command": "~/.local/share/wabox-bot/plugins/faster-whisper/transcribe.sh"
+  }
+}
+```
+
+#### Using a pi provider (Gemini, OpenCode, …)
+
+`provider` can be the id of any pi provider (`opencode-go`, `google`, …). The
+model is resolved through pi's catalog and called directly with pi's stored
+credential: Gemini-style providers receive the audio as inline data, and
+OpenAI-compatible providers as an `input_audio` part. No extra key is needed.
+
+```json
+{
+  "transcription": {
+    "provider": "opencode-go",
+    "model": "gemini-4-argon"
+  }
+}
+```
+
+Use the exact upstream model id. pi's bundled catalog can be stale or
+fuzzy-match a deprecated sibling (e.g. `gemini-4-argon` →
+`gemini-4-argon-contributor`); the configured id is what gets sent to the
+provider. Providers whose API cannot carry audio (e.g. `anthropic-messages`)
+report that explicitly.
+
+#### Fallback chain
+
+Transcription can be a chain: if the primary backend fails (provider out of
+credits, outage, bad key), the next entry is tried, and the log says which one
+answered. Each `fallback` entry is a complete backend; only `language`, `prompt`
+and `timeoutMs` are inherited from the primary.
+
+```json
+{
+  "transcription": {
+    "provider": "openrouter",
+    "model": "google/gemini-3.1-flash-lite",
+    "fallback": [
+      {
+        "provider": "openai",
+        "baseUrl": "https://api.groq.com/openai/v1/audio/transcriptions",
+        "model": "whisper-large-v3",
+        "apiKeyFile": "stt-groq.key",
+        "language": "pt"
+      }
+    ]
+  }
+}
+```
+
+The error the agent sees lists every backend and its failure, so the prompt says
+why no transcript is available instead of just "failed". The dashboard's
+**Áudio** tab edits the chain (the fallback list as JSON).
+
+| Key | Env | Meaning |
+| --- | --- | --- |
+| `enabled` | `WABOX_PI_TRANSCRIBE_*` | default `true` once a backend is set |
+| `provider` | `WABOX_PI_TRANSCRIBE_PROVIDER` | `openrouter` (chat + `input_audio`), `openai` (`/audio/transcriptions`), `command`, or a pi provider id (`opencode-go`, `google`, …) for a direct Gemini/OpenAI-compatible call |
+| `baseUrl` | `WABOX_PI_TRANSCRIBE_URL` | endpoint; defaults to OpenRouter chat when `provider: openrouter` |
+| `model` | `WABOX_PI_TRANSCRIBE_MODEL` | STT/audio model (`google/gemini-3.1-flash-lite`, `whisper-large-v3`, …) |
+| `apiKey` / `apiKeyEnv` / `apiKeyFile` | `WABOX_PI_TRANSCRIBE_KEY` | secret resolution, in that order; falls back to pi's stored credential for the provider |
+| `piProvider` | — | provider id to read from pi's `auth.json` (defaults to `openrouter`) |
+| `usePiAuth` | — | default `true`; set `false` to ignore pi's stored credential |
+| `language` | `WABOX_PI_TRANSCRIBE_LANG` | ISO code; empty ⇒ auto-detect |
+| `prompt` | — | optional hint passed to the audio model |
+| `timeoutMs` | — | default `120000` |
+| `command` | `WABOX_PI_TRANSCRIBE_CMD` | shell command; the audio path is appended (or `{file}` substituted); stdout is the transcript |
+| `fallback` | — | ordered list of backends tried when the primary fails (each with `provider`/`baseUrl`/`model`/`command`/`apiKey*`) |
+
+OGG/Opus voice notes are sent as-is for `openrouter`; other containers are
+transcoded to mp3 with `ffmpeg` first.
+
+Only inbound `audio/*` media (voice notes) is transcribed. If transcription is
+disabled or fails, the prompt says so and the agent is told not to pretend it
+heard the audio. Transcription runs in the daemon process, so the bash sandbox's
+network setting does not affect it.
 
 #### Image fallback (vision model)
 

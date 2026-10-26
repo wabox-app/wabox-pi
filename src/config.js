@@ -48,6 +48,40 @@ function list(value, fallback) {
   return fallback;
 }
 
+// One transcription backend (see src/transcribe.js): a command, an
+// OpenAI-compatible endpoint, or an OpenRouter chat request.
+function normalizeTranscriptionBackend(value, base) {
+  if (!value || typeof value !== 'object') return null;
+  const out = {};
+  for (const key of ['provider', 'command', 'baseUrl', 'model', 'apiKeyEnv', 'piProvider', 'language', 'prompt']) {
+    if (value[key] !== undefined) out[key] = String(value[key]) || null;
+  }
+  if (value.apiKey !== undefined) out.apiKey = String(value.apiKey) || null;
+  if (value.apiKeyFile !== undefined) {
+    out.apiKeyFile = value.apiKeyFile ? resolveFrom(base, value.apiKeyFile) : null;
+  }
+  if (value.usePiAuth !== undefined) out.usePiAuth = bool(value.usePiAuth, true);
+  if (value.timeoutMs !== undefined) out.timeoutMs = int(value.timeoutMs, 120_000, { min: 1_000 });
+  if (value.enabled !== undefined) out.enabled = bool(value.enabled, true);
+  return Object.keys(out).length ? out : null;
+}
+
+// A per-conversation transcription override. Only the keys present are set, so
+// the conversation keeps inheriting the rest of the instance block.
+export function normalizeTranscriptionOverride(value, base) {
+  if (!value || typeof value !== 'object') return null;
+  const out = normalizeTranscriptionBackend(value, base) ?? {};
+  if (value.fallback !== undefined) {
+    if (value.fallback === null) out.fallback = [];
+    else {
+      out.fallback = (Array.isArray(value.fallback) ? value.fallback : [])
+        .map((entry) => normalizeTranscriptionBackend(entry, base))
+        .filter(Boolean);
+    }
+  }
+  return Object.keys(out).length ? out : null;
+}
+
 // Inbound-image descriptions (see src/vision.js). `mode: auto` describes only
 // when the chat model cannot read images; `always` describes regardless.
 export function normalizeVision(value) {
@@ -124,6 +158,7 @@ export const CONVERSATION_KEYS = [
   'workspaceTemplate',
   'imageGen',
   'vision',
+  'transcription',
 ];
 
 function normalizeConversation(override, base) {
@@ -171,6 +206,12 @@ function normalizeConversation(override, base) {
   if (override.vision !== undefined) {
     out.vision = override.vision === null ? null : normalizeVision(override.vision);
   }
+  if (override.transcription !== undefined) {
+    out.transcription =
+      override.transcription === null
+        ? null
+        : normalizeTranscriptionOverride(override.transcription, base);
+  }
   return out;
 }
 
@@ -197,6 +238,14 @@ export function conversationConfig(config, slug) {
       override.vision && typeof override.vision === 'object'
         ? { ...(config.vision ?? {}), ...override.vision }
         : config.vision;
+  }
+  // Same idea for transcription: a chat may change only the model or add a
+  // fallback and keep the instance backend. `fallback` replaces (no concat).
+  if (override?.transcription !== undefined) {
+    merged.transcription =
+      override.transcription && typeof override.transcription === 'object'
+        ? { ...(config.transcription ?? {}), ...override.transcription }
+        : config.transcription;
   }
   return merged;
 }
@@ -255,11 +304,21 @@ export function loadConfig({ cwd = process.cwd() } = {}) {
     language: env('WABOX_PI_TRANSCRIBE_LANG') || tr.language || null,
     prompt: tr.prompt || null,
     timeoutMs: int(tr.timeoutMs, 120_000, { min: 1_000 }),
+    // Ordered alternatives tried after the primary backend fails (credits,
+    // outage, missing key). Entries are complete backends.
+    fallback: (Array.isArray(tr.fallback) ? tr.fallback : [])
+      .map((entry) => normalizeTranscriptionBackend(entry, base))
+      .filter(Boolean),
   };
   transcription.enabled =
     tr.enabled !== undefined
       ? bool(tr.enabled, true)
-      : Boolean(transcription.command || transcription.baseUrl || transcription.provider);
+      : Boolean(
+          transcription.command ||
+            transcription.baseUrl ||
+            transcription.provider ||
+            transcription.fallback.length,
+        );
 
   // Agent web access (see src/web.js), served by the daemon process so the
   // sandboxed shell can stay offline.

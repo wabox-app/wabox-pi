@@ -26,6 +26,14 @@ All notable changes to this project are documented here. The format follows
   and an optional workspace `SYSTEM.md`, both appended to pi's prompt.
 - `dashboardHost` / `dashboardPort` settings, `WABOX_PI_DASHBOARD_*` env vars,
   and an opt-in bearer token for non-loopback binds.
+- Transcription through any pi provider (`provider: "opencode-go"`, `model:
+  "gemini-4-argon"`): pi credentials are reused and the audio is sent as Gemini
+  `inlineData` or OpenAI-compatible `input_audio`. The configured model id is used
+  verbatim, so a stale catalog cannot redirect it to a deprecated sibling.
+- Transcription fallback chain (`transcription.fallback`): ordered backends tried
+  after the primary fails, per-conversation `transcription` overrides merged over
+  the instance, and an **Áudio** tab in the dashboard. The final error names every
+  backend and its failure reason.
 - Image fallback for text-only chat models: inbound images are described by a
   separate vision model (`vision.modelProvider`/`model`, any pi model that
   accepts images) or a local command, with the description injected into the
